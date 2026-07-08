@@ -66,6 +66,37 @@ PY
 
 `nvidia-smi` may be missing on Kaggle. That is okay if `torch.cuda.is_available()` is `True`.
 
+## tiny-cuda-nn Wheel Cache
+
+Keep the compiled `tinycudann` wheel in `/kaggle/working/wheels` so a restarted instance can reinstall quickly.
+
+Build the wheel if it is missing:
+
+```bash
+export TCNN_CUDA_ARCHITECTURES=75
+export LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda-12.8/compat:$LIBRARY_PATH
+export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
+
+mkdir -p /kaggle/working/wheels
+python -m pip wheel -v --no-build-isolation --no-deps \
+  -w /kaggle/working/wheels \
+  /kaggle/working/tiny-cuda-nn/bindings/torch
+```
+
+Install or reinstall from the newest cached wheel:
+
+```bash
+cd /kaggle/working/BestNeRF/k-planes
+bash scripts/kaggle_install_tcnn_from_wheel.sh
+```
+
+Install a specific wheel:
+
+```bash
+TCNN_WHEEL="$(ls -t /kaggle/working/wheels/tinycudann*.whl | head -1)" \
+  bash scripts/kaggle_install_tcnn_from_wheel.sh
+```
+
 ## Coffee Martini Data Symlink
 
 After recloning K-Planes, the data symlink may point at the wrong location.
