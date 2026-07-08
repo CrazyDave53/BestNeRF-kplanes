@@ -23,7 +23,8 @@ python -m pip install \
   torchmetrics \
   scikit-image \
   configargparse \
-  tensorboard
+  tensorboard \
+  tensorflow
 
 export TCNN_CUDA_ARCHITECTURES="${TCNN_CUDA_ARCHITECTURES:-75}"
 export LIBRARY_PATH="/usr/local/nvidia/lib64:/usr/local/cuda-12.8/compat:${LIBRARY_PATH:-}"
