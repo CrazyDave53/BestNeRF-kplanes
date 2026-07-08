@@ -197,7 +197,7 @@ def init_tr_data(data_downsample, data_dir, **kwargs):
         data_dir, split='train', downsample=data_downsample,
         batch_size=batch_size,
         max_cameras=kwargs.get('max_train_cameras', None),
-        max_tsteps=kwargs['max_train_tsteps'] if keyframes else None,
+        max_tsteps=kwargs.get('max_train_tsteps', None),
         isg=isg, keyframes=keyframes, contraction=kwargs['contract'], ndc=kwargs['ndc'],
         near_scaling=float(kwargs.get('near_scaling', 0)), ndc_far=float(kwargs.get('ndc_far', 0)),
         scene_bbox=kwargs['scene_bbox'],

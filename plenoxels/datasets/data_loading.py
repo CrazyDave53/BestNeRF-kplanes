@@ -95,7 +95,8 @@ def _load_video_1cam(idx: int,
                      poses: torch.Tensor,
                      out_h: int,
                      out_w: int,
-                     load_every: int = 1
+                     load_every: int = 1,
+                     max_frames: Optional[int] = None,
                      ):  # -> Tuple[List[torch.Tensor], torch.Tensor, List[int]]:
     filters = [
         ("scale", f"w={out_w}:h={out_h}")
@@ -107,6 +108,8 @@ def _load_video_1cam(idx: int,
     for frame_idx, frame in enumerate(all_frames):
         if frame_idx % load_every != 0:
             continue
+        if max_frames is not None and len(imgs) >= max_frames:
+            break
         if frame_idx >= 300:  # Only look at the first 10 seconds
             break
         # Frame is np.ndarray in uint8 dtype (H, W, C)

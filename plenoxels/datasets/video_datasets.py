@@ -77,12 +77,14 @@ class Video360Dataset(BaseDataset):
                 imgs = None
             else:
                 per_cam_poses, per_cam_near_fars, intrinsics, videopaths = load_llffvideo_poses(
-                    datadir, downsample=self.downsample, split=split, near_scaling=self.near_scaling)
+                    datadir, downsample=self.downsample, split=split,
+                    near_scaling=self.near_scaling, max_cameras=self.max_cameras)
                 if split == 'test':
                     keyframes = False
                 poses, imgs, timestamps, self.median_imgs = load_llffvideo_data(
                     videopaths=videopaths, cam_poses=per_cam_poses, intrinsics=intrinsics,
-                    split=split, keyframes=keyframes, keyframes_take_each=30)
+                    split=split, keyframes=keyframes, keyframes_take_each=30,
+                    max_tsteps=self.max_tsteps)
                 self.poses = poses.float()
                 if contraction:
                     self.per_cam_near_fars = per_cam_near_fars.float()
@@ -172,7 +174,7 @@ class Video360Dataset(BaseDataset):
 
         self.isg_weights = None
         self.ist_weights = None
-        if split == "train" and dset_type == 'llff':  # Only use importance sampling with DyNeRF videos
+        if split == "train" and dset_type == 'llff' and self.isg:  # Only use importance sampling when enabled.
             if os.path.exists(os.path.join(datadir, f"isg_weights.pt")):
                 self.isg_weights = torch.load(os.path.join(datadir, f"isg_weights.pt"))
                 log.info(f"Reloaded {self.isg_weights.shape[0]} ISG weights from file.")
@@ -375,7 +377,8 @@ def load_360video_frames(datadir, split, max_cameras: int, max_tsteps: Optional[
 def load_llffvideo_poses(datadir: str,
                          downsample: float,
                          split: str,
-                         near_scaling: float) -> Tuple[
+                         near_scaling: float,
+                         max_cameras: Optional[int] = None) -> Tuple[
                             torch.Tensor, torch.Tensor, Intrinsics, List[str]]:
     """Load poses and metadata for LLFF video.
 
@@ -409,6 +412,9 @@ def load_llffvideo_poses(datadir: str,
         # https://github.com/fengres/mixvoxels/blob/0013e4ad63c80e5f14eb70383e2b073052d07fba/dataLoader/llff_video.py#L323
         log.info(f"Deleting unsynchronized camera from coffee-martini video.")
         split_ids = np.setdiff1d(split_ids, 12)
+    if max_cameras is not None:
+        split_ids = split_ids[:max_cameras]
+        log.info(f"Selected first {len(split_ids)} cameras for LLFF video smoke run.")
     poses = torch.from_numpy(poses[split_ids])
     near_fars = torch.from_numpy(near_fars[split_ids])
     videopaths = videopaths[split_ids].tolist()
@@ -422,6 +428,7 @@ def load_llffvideo_data(videopaths: List[str],
                         split: str,
                         keyframes: bool,
                         keyframes_take_each: Optional[int] = None,
+                        max_tsteps: Optional[int] = None,
                         ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if keyframes and (keyframes_take_each is None or keyframes_take_each < 1):
         raise ValueError(f"'keyframes_take_each' must be a positive number, "
@@ -436,6 +443,7 @@ def load_llffvideo_data(videopaths: List[str],
         out_h=intrinsics.height,
         out_w=intrinsics.width,
         load_every=keyframes_take_each if keyframes else 1,
+        max_frames=max_tsteps,
     )
     imgs, poses, median_imgs, timestamps = zip(*loaded)
     # Stack everything together
