@@ -17,9 +17,8 @@ class ExtractOpenSegNeu3DTest(unittest.TestCase):
         self.assertEqual([p.name for p in videos], ["cam01.mp4", "cam02.mp4", "cam10.mp4"])
 
     def test_compute_feature_shape_uses_integer_downsample(self):
-        self.assertEqual(compute_feature_shape(1014, 1352, 4), (253, 338))
+        self.assertEqual(compute_feature_shape(2028, 2704, 8), (253, 338))
 
 
 if __name__ == "__main__":
     unittest.main()
-

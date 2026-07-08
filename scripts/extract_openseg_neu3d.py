@@ -47,7 +47,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-cameras", type=int, default=None)
     parser.add_argument("--max-frames", type=int, default=300)
-    parser.add_argument("--feature-downsample", type=int, default=4)
+    parser.add_argument(
+        "--feature-downsample",
+        type=int,
+        default=8,
+        help=(
+            "Feature-map downsample from raw mp4 resolution. Coffee Martini raw videos are "
+            "2028x2704; K-Planes trains at data_downsample=2, and OpenSeg supervision is "
+            "typically 4x below that, so the default is raw/8 = 253x338."
+        ),
+    )
     parser.add_argument("--jpeg-quality", type=int, default=95)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -190,4 +199,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
