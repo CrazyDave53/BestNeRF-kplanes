@@ -13,6 +13,8 @@ from typing import Iterable, Optional
 
 import numpy as np
 
+OPENSEG_FEATURE_DIM = 768
+
 
 def find_camera_videos(data_dir: Path) -> list[Path]:
     return sorted(data_dir.glob("cam*.mp4"))
@@ -94,6 +96,69 @@ def _write_temp_frame(frame_bgr: np.ndarray, path: Path, jpeg_quality: int) -> N
         raise RuntimeError(f"Could not write temporary frame: {path}")
 
 
+def save_feature_shard(
+    output_path: Path,
+    frame_features: Iterable[np.ndarray],
+    *,
+    max_frames: int,
+    feature_shape: tuple[int, int, int],
+    chunk_frames: int = 16,
+) -> dict:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = output_path.with_name(f"{output_path.stem}.tmp.npy")
+    if temp_path.exists():
+        temp_path.unlink()
+
+    shard = np.lib.format.open_memmap(
+        temp_path,
+        mode="w+",
+        dtype=np.float16,
+        shape=(max_frames, *feature_shape),
+    )
+    frame_count = 0
+    try:
+        for feature in frame_features:
+            if frame_count >= max_frames:
+                break
+            feature = np.asarray(feature, dtype=np.float16)
+            if feature.shape != feature_shape:
+                raise RuntimeError(
+                    f"Expected feature shape {feature_shape}, got {feature.shape}"
+                )
+            shard[frame_count] = feature
+            frame_count += 1
+    finally:
+        shard.flush()
+        del shard
+
+    if frame_count == 0:
+        temp_path.unlink(missing_ok=True)
+        raise RuntimeError(f"No frames extracted for {output_path}")
+
+    if output_path.exists():
+        output_path.unlink()
+
+    if frame_count == max_frames:
+        temp_path.replace(output_path)
+    else:
+        source = np.load(temp_path, mmap_mode="r")
+        trimmed = np.lib.format.open_memmap(
+            output_path,
+            mode="w+",
+            dtype=np.float16,
+            shape=(frame_count, *feature_shape),
+        )
+        for start in range(0, frame_count, chunk_frames):
+            end = min(start + chunk_frames, frame_count)
+            trimmed[start:end] = source[start:end]
+        trimmed.flush()
+        del trimmed
+        del source
+        temp_path.unlink()
+
+    return {"shape": [frame_count, *feature_shape], "dtype": str(np.dtype(np.float16))}
+
+
 def extract_camera(
     video_path: Path,
     output_path: Path,
@@ -112,9 +177,9 @@ def extract_camera(
     src_height = int(cap.get(4))
     feat_h, feat_w = compute_feature_shape(src_height, src_width, feature_downsample)
 
-    features = []
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"{video_path.stem}_openseg_"))
-    try:
+
+    def frame_features():
         frame_idx = 0
         while frame_idx < max_frames:
             ok, frame_bgr = cap.read()
@@ -127,23 +192,25 @@ def extract_camera(
                 openseg_model,
                 img_size=[feat_h, feat_w],
             )
-            features.append(feat_chw.permute(1, 2, 0).cpu().numpy().astype(np.float16))
+            yield feat_chw.permute(1, 2, 0).cpu().numpy().astype(np.float16)
             frame_idx += 1
+
+    try:
+        shard_info = save_feature_shard(
+            output_path,
+            frame_features(),
+            max_frames=max_frames,
+            feature_shape=(feat_h, feat_w, OPENSEG_FEATURE_DIM),
+        )
     finally:
         cap.release()
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    if not features:
-        raise RuntimeError(f"No frames extracted from {video_path}")
-
-    shard = np.stack(features, axis=0)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    np.save(output_path, shard)
     return {
         "video": str(video_path),
         "output": str(output_path),
-        "shape": list(shard.shape),
-        "dtype": str(shard.dtype),
+        "shape": shard_info["shape"],
+        "dtype": shard_info["dtype"],
         "source_height": src_height,
         "source_width": src_width,
     }
