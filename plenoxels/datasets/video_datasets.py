@@ -52,6 +52,7 @@ class Video360Dataset(BaseDataset):
         self.openseg_cache = None
         self.camera_names = None
         self.num_frames_per_camera = None
+        self.frame_ids_by_image = None
         self.downsample = downsample
         self.isg = isg
         self.ist = False
@@ -95,6 +96,7 @@ class Video360Dataset(BaseDataset):
                     max_tsteps=self.max_tsteps)
                 if split == 'train':
                     self.num_frames_per_camera = len(imgs) // len(videopaths)
+                    self.frame_ids_by_image = timestamps.long()
                 self.poses = poses.float()
                 if contraction:
                     self.per_cam_near_fars = per_cam_near_fars.float()
@@ -288,7 +290,10 @@ class Video360Dataset(BaseDataset):
         }
         if self.split == 'train':
             camera_id = torch.div(image_id, self.num_frames_per_camera, rounding_mode='floor')  # (num_rays)
-            frame_id = torch.remainder(image_id, self.num_frames_per_camera)
+            if self.frame_ids_by_image is not None:
+                frame_id = self.frame_ids_by_image[image_id]
+            else:
+                frame_id = torch.remainder(image_id, self.num_frames_per_camera)
             out['camera_ids'] = camera_id
             out['frame_ids'] = frame_id
             out['pixel_x'] = pixel_x
