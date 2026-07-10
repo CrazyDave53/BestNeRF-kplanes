@@ -23,6 +23,12 @@ from plenoxels.ops.lr_scheduling import (
 )
 
 
+def semantic_cosine_loss(preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    preds = torch.nn.functional.normalize(preds.float(), dim=-1)
+    targets = torch.nn.functional.normalize(targets.float(), dim=-1)
+    return (1.0 - (preds * targets).sum(dim=-1)).mean()
+
+
 class BaseTrainer(abc.ABC):
     def __init__(self,
                  train_data_loader: Iterable,
@@ -44,6 +50,10 @@ class BaseTrainer(abc.ABC):
         self.device = device
         self.eval_batch_size = kwargs.get('eval_batch_size', 8129)
         self.extra_args = kwargs
+        self.train_rgb = kwargs.get("train_rgb", True)
+        self.train_semantic = kwargs.get("train_semantic", False)
+        self.freeze_rgb_for_semantic = kwargs.get("freeze_rgb_for_semantic", False)
+        self.semantic_loss_weight = float(kwargs.get("semantic_loss_weight", 0.0))
         self.timer = CudaTimer(enabled=False)
 
         self.log_dir = os.path.join(logdir, expname)
@@ -54,6 +64,10 @@ class BaseTrainer(abc.ABC):
         self.loss_info: Optional[Dict[str, EMA]] = None
 
         self.model = self.init_model(**self.extra_args)
+        if self.freeze_rgb_for_semantic:
+            if not hasattr(self.model, "freeze_rgb_parameters"):
+                raise AttributeError("Model must define freeze_rgb_parameters()")
+            self.model.freeze_rgb_parameters()
         self.optimizer = self.init_optim(**self.extra_args)
         self.scheduler = self.init_lr_scheduler(**self.extra_args)
         self.criterion = torch.nn.MSELoss(reduction='mean')
@@ -81,11 +95,21 @@ class BaseTrainer(abc.ABC):
             self.timer.check("model-forward")
             # Reconstruction loss
             recon_loss = self.criterion(fwd_out['rgb'], data['imgs'])
+            semantic_loss = None
             # Regularization
-            loss = recon_loss
-            for r in self.regularizers:
-                reg_loss = r.regularize(self.model, model_out=fwd_out)
-                loss = loss + reg_loss
+            if self.train_rgb:
+                loss = recon_loss
+                for r in self.regularizers:
+                    reg_loss = r.regularize(self.model, model_out=fwd_out)
+                    loss = loss + reg_loss
+            else:
+                loss = recon_loss.new_zeros((), requires_grad=True)
+            if self.train_semantic and "openseg_features" in data:
+                if "semantic_features" not in fwd_out:
+                    raise KeyError("semantic_features")
+                semantic_loss = semantic_cosine_loss(
+                    fwd_out["semantic_features"], data["openseg_features"])
+                loss = loss + self.semantic_loss_weight * semantic_loss
             self.timer.check("regularizaion-forward")
         # Update weights
         self.optimizer.zero_grad(set_to_none=True)
@@ -102,6 +126,12 @@ class BaseTrainer(abc.ABC):
                 recon_loss_val = recon_loss.item()
                 self.loss_info[f"mse"].update(recon_loss_val)
                 self.loss_info[f"psnr"].update(-10 * math.log10(recon_loss_val))
+                if semantic_loss is not None:
+                    semantic_loss_val = semantic_loss.item()
+                    if "semantic" in self.loss_info:
+                        self.loss_info["semantic"].update(semantic_loss_val)
+                    if "semantic_loss" in self.loss_info:
+                        self.loss_info["semantic_loss"].update(semantic_loss_val)
                 for r in self.regularizers:
                     r.report(self.loss_info)
 
@@ -181,6 +211,8 @@ class BaseTrainer(abc.ABC):
         data["near_fars"] = data["near_fars"].to(self.device)
         if "timestamps" in data:
             data["timestamps"] = data["timestamps"].to(self.device)
+        if "openseg_features" in data:
+            data["openseg_features"] = data["openseg_features"].to(self.device)
         bg_color = data["bg_color"]
         if isinstance(bg_color, torch.Tensor):
             bg_color = bg_color.to(self.device)
@@ -369,7 +401,16 @@ class BaseTrainer(abc.ABC):
     def init_optim(self, **kwargs) -> torch.optim.Optimizer:
         optim_type = kwargs['optim_type']
         if optim_type == 'adam':
-            optim = torch.optim.Adam(params=self.model.get_params(kwargs['lr']), eps=1e-15)
+            param_groups = []
+            for group in self.model.get_params(kwargs['lr']):
+                if isinstance(group, dict):
+                    group = dict(group)
+                    group["params"] = [p for p in group["params"] if p.requires_grad]
+                    if group["params"]:
+                        param_groups.append(group)
+                elif group.requires_grad:
+                    param_groups.append(group)
+            optim = torch.optim.Adam(params=param_groups, eps=1e-15)
         else:
             raise NotImplementedError()
         return optim

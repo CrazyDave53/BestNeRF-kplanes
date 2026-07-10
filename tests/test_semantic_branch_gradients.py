@@ -1,9 +1,51 @@
 import unittest
+import tempfile
 
 import torch
 
 from plenoxels.models.lowrank_model import LowrankModel
 from plenoxels.models.semantic_kplane_field import SemanticKPlaneField
+from plenoxels.runners import base_trainer
+from plenoxels.runners.base_trainer import BaseTrainer
+from plenoxels.utils.ema import EMA
+
+
+class TinyFreezeModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.rgb_param = torch.nn.Parameter(torch.tensor([1.0]))
+        self.semantic_param = torch.nn.Parameter(torch.tensor([2.0]))
+        self.freeze_called = False
+
+    def get_params(self, lr):
+        return [
+            {"params": [self.rgb_param], "lr": lr},
+            {"params": [self.semantic_param], "lr": lr},
+        ]
+
+    def freeze_rgb_parameters(self):
+        self.freeze_called = True
+        self.rgb_param.requires_grad = False
+
+    def step_before_iter(self, _):
+        pass
+
+    def step_after_iter(self, _):
+        pass
+
+
+class TinyTrainer(BaseTrainer):
+    def eval_step(self, data, **kwargs):
+        return {}
+
+    def validate(self):
+        pass
+
+    def init_epoch_info(self):
+        return {"mse": EMA(), "psnr": EMA(), "semantic": EMA()}
+
+    def init_model(self, **kwargs):
+        return kwargs["model"]
 
 
 def make_semantic_field(**kwargs):
@@ -76,6 +118,46 @@ def make_rays():
 
 
 class SemanticBranchGradientTest(unittest.TestCase):
+    def test_cosine_semantic_loss_is_zero_for_matching_features(self):
+        self.assertTrue(hasattr(base_trainer, "semantic_cosine_loss"))
+        preds = torch.tensor([[2.0, 0.0, 0.0], [0.0, -3.0, 0.0]])
+        targets = torch.tensor([[7.0, 0.0, 0.0], [0.0, -0.5, 0.0]])
+
+        loss = base_trainer.semantic_cosine_loss(preds, targets)
+
+        self.assertTrue(torch.allclose(loss, torch.tensor(0.0), atol=1e-6))
+
+    def test_optimizer_excludes_frozen_rgb_params_after_trainer_freeze(self):
+        model = TinyFreezeModel()
+
+        with tempfile.TemporaryDirectory() as logdir:
+            trainer = TinyTrainer(
+                train_data_loader=[],
+                num_steps=1,
+                logdir=logdir,
+                expname="semantic-freeze-test",
+                train_fp16=False,
+                save_every=-1,
+                valid_every=-1,
+                save_outputs=False,
+                device="cpu",
+                model=model,
+                optim_type="adam",
+                lr=1e-3,
+                scheduler_type="cosine",
+                freeze_rgb_for_semantic=True,
+            )
+
+        optimized_params = {
+            param
+            for group in trainer.optimizer.param_groups
+            for param in group["params"]
+        }
+        self.assertTrue(model.freeze_called)
+        self.assertFalse(model.rgb_param.requires_grad)
+        self.assertNotIn(model.rgb_param, optimized_params)
+        self.assertIn(model.semantic_param, optimized_params)
+
     def test_semantic_field_outputs_per_sample_features(self):
         field = make_semantic_field()
         pts = torch.zeros((2, 3, 3), dtype=torch.float32)
