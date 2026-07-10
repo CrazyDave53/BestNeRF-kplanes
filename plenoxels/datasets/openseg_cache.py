@@ -60,11 +60,22 @@ class OpenSegFeatureCache:
         ):
             raise ValueError("camera_names, frame_ids, x, and y must describe the same batch size")
 
+        shards = {}
         features = []
-        for idx, camera_name in enumerate(camera_names):
-            shard = self._load_shard(camera_name)
-            try:
-                _, feat_h, feat_w, _ = shard.shape
+        try:
+            for camera_name in dict.fromkeys(camera_names):
+                shards[camera_name] = self._load_shard(camera_name)
+
+            for idx, camera_name in enumerate(camera_names):
+                shard = shards[camera_name]
+                frame_count, feat_h, feat_w, _ = shard.shape
+                frame_id = int(frame_ids[idx].item())
+                if frame_id < 0 or frame_id >= frame_count:
+                    raise IndexError(
+                        f"OpenSeg feature lookup for camera {camera_name} got frame id "
+                        f"{frame_id}; valid frame count is {frame_count}"
+                    )
+
                 feat_x, feat_y = map_pixels_to_feature_pixels(
                     x=x[idx],
                     y=y[idx],
@@ -73,11 +84,11 @@ class OpenSegFeatureCache:
                     feat_h=feat_h,
                     feat_w=feat_w,
                 )
-                frame_id = int(frame_ids[idx].item())
                 features.append(
                     np.array(shard[frame_id, int(feat_y.item()), int(feat_x.item())])
                 )
-            finally:
+        finally:
+            for shard in shards.values():
                 mmap = getattr(shard, "_mmap", None)
                 if mmap is not None:
                     mmap.close()
