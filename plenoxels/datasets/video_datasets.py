@@ -5,6 +5,7 @@ import math
 import os
 import time
 from collections import defaultdict
+from pathlib import Path
 from typing import Optional, List, Tuple, Any, Dict
 
 import numpy as np
@@ -14,6 +15,7 @@ from .base_dataset import BaseDataset
 from .data_loading import parallel_load_images
 from .intrinsics import Intrinsics
 from .llff_dataset import load_llff_poses_helper
+from .openseg_cache import OpenSegFeatureCache
 from .ray_utils import (
     generate_spherical_poses, create_meshgrid, stack_camera_dirs, get_rays, generate_spiral_path
 )
@@ -41,10 +43,15 @@ class Video360Dataset(BaseDataset):
                  ndc: bool = False,
                  scene_bbox: Optional[List] = None,
                  near_scaling: float = 0.9,
-                 ndc_far: float = 2.6):
+                 ndc_far: float = 2.6,
+                 openseg_cache_dir: Optional[str] = None,
+                 openseg_feature_dim: int = 768):
         self.keyframes = keyframes
         self.max_cameras = max_cameras
         self.max_tsteps = max_tsteps
+        self.openseg_cache = None
+        self.camera_names = None
+        self.num_frames_per_camera = None
         self.downsample = downsample
         self.isg = isg
         self.ist = False
@@ -79,12 +86,15 @@ class Video360Dataset(BaseDataset):
                 per_cam_poses, per_cam_near_fars, intrinsics, videopaths = load_llffvideo_poses(
                     datadir, downsample=self.downsample, split=split,
                     near_scaling=self.near_scaling, max_cameras=self.max_cameras)
+                self.camera_names = [Path(path).stem for path in videopaths]
                 if split == 'test':
                     keyframes = False
                 poses, imgs, timestamps, self.median_imgs = load_llffvideo_data(
                     videopaths=videopaths, cam_poses=per_cam_poses, intrinsics=intrinsics,
                     split=split, keyframes=keyframes, keyframes_take_each=30,
                     max_tsteps=self.max_tsteps)
+                if split == 'train':
+                    self.num_frames_per_camera = len(imgs) // len(videopaths)
                 self.poses = poses.float()
                 if contraction:
                     self.per_cam_near_fars = per_cam_near_fars.float()
@@ -146,6 +156,8 @@ class Video360Dataset(BaseDataset):
             imgs = (imgs * 255).to(torch.uint8)
         if self.median_imgs is not None and self.median_imgs.dtype != torch.uint8:
             self.median_imgs = (self.median_imgs * 255).to(torch.uint8)
+        if split == 'train' and self.num_frames_per_camera is None and imgs is not None:
+            self.num_frames_per_camera = len(imgs) // len(self.per_cam_near_fars)
         if split == 'train':
             imgs = imgs.view(-1, imgs.shape[-1])
         elif imgs is not None:
@@ -174,6 +186,9 @@ class Video360Dataset(BaseDataset):
 
         self.isg_weights = None
         self.ist_weights = None
+        if split == "train" and openseg_cache_dir is not None:
+            self.openseg_cache = OpenSegFeatureCache(
+                openseg_cache_dir, expected_feature_dim=openseg_feature_dim)
         if split == "train" and dset_type == 'llff' and self.isg:  # Only use importance sampling when enabled.
             if os.path.exists(os.path.join(datadir, f"isg_weights.pt")):
                 self.isg_weights = torch.load(os.path.join(datadir, f"isg_weights.pt"))
@@ -261,6 +276,7 @@ class Video360Dataset(BaseDataset):
                 image_id = image_id.repeat(self.weights_subsampled ** 2)
                 # Inverse of the process to get x, y from index. image_id stays the same.
                 index = x + y * w + image_id * h * w
+            pixel_x, pixel_y = x.long(), y.long()
             x, y = x + 0.5, y + 0.5
         else:
             image_id = [index]
@@ -271,9 +287,23 @@ class Video360Dataset(BaseDataset):
             "imgs": None,
         }
         if self.split == 'train':
-            num_frames_per_camera = len(self.imgs) // (len(self.per_cam_near_fars) * h * w)
-            camera_id = torch.div(image_id, num_frames_per_camera, rounding_mode='floor')  # (num_rays)
+            camera_id = torch.div(image_id, self.num_frames_per_camera, rounding_mode='floor')  # (num_rays)
+            frame_id = torch.remainder(image_id, self.num_frames_per_camera)
+            out['camera_ids'] = camera_id
+            out['frame_ids'] = frame_id
+            out['pixel_x'] = pixel_x
+            out['pixel_y'] = pixel_y
             out['near_fars'] = self.per_cam_near_fars[camera_id, :]
+            if self.openseg_cache is not None:
+                camera_names = [self.camera_names[int(i.item())] for i in camera_id]
+                out['openseg_features'] = self.openseg_cache.lookup(
+                    camera_names=camera_names,
+                    frame_ids=frame_id,
+                    x=pixel_x,
+                    y=pixel_y,
+                    rgb_h=h,
+                    rgb_w=w,
+                )
         else:
             out['near_fars'] = self.per_cam_near_fars  # Only one test camera
 

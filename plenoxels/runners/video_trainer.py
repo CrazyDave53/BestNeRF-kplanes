@@ -201,6 +201,8 @@ def init_tr_data(data_downsample, data_dir, **kwargs):
         isg=isg, keyframes=keyframes, contraction=kwargs['contract'], ndc=kwargs['ndc'],
         near_scaling=float(kwargs.get('near_scaling', 0)), ndc_far=float(kwargs.get('ndc_far', 0)),
         scene_bbox=kwargs['scene_bbox'],
+        openseg_cache_dir=kwargs.get("openseg_cache_dir", None),
+        openseg_feature_dim=kwargs.get("semantic_feature_dim", 768),
     )
     if ist:
         tr_dset.switch_isg2ist()  # this should only happen in case we're reloading
