@@ -1,3 +1,4 @@
+import ast
 import logging as log
 from typing import Dict, List, Optional, Sequence, Union
 
@@ -28,7 +29,10 @@ class SemanticKPlaneField(nn.Module):
 
         self.aabb = nn.Parameter(aabb, requires_grad=False)
         self.spatial_distortion = spatial_distortion
-        self.grid_config = grid_config
+        if isinstance(grid_config, str):
+            self.grid_config: List[Dict] = ast.literal_eval(grid_config)
+        else:
+            self.grid_config: List[Dict] = grid_config
         self.multiscale_res_multipliers: List[int] = multiscale_res or [1]
         self.concat_features = concat_features_across_scales
         self.semantic_feature_dim = semantic_feature_dim
@@ -58,7 +62,7 @@ class SemanticKPlaneField(nn.Module):
             n_input_dims=self.feature_dim,
             n_output_dims=self.semantic_feature_dim,
             network_config={
-                "otype": "FullyFusedMLP",
+                "otype": "CutlassMLP",
                 "activation": "ReLU",
                 "output_activation": "None",
                 "n_neurons": 128,
