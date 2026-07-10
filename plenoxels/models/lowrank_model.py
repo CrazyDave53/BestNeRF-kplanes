@@ -6,6 +6,7 @@ import torch.nn as nn
 
 from plenoxels.models.density_fields import KPlaneDensityField
 from plenoxels.models.kplane_field import KPlaneField
+from plenoxels.models.semantic_kplane_field import SemanticKPlaneField
 from plenoxels.ops.activations import init_density_activation
 from plenoxels.raymarching.ray_samplers import (
     UniformLinDispPiecewiseSampler, UniformSampler,
@@ -47,6 +48,13 @@ class LowrankModel(nn.Module):
                  use_appearance_embedding: bool = False,
                  appearance_embedding_dim: int = 0,
                  num_images: Optional[int] = None,
+                 # semantic branch
+                 semantic_enabled: bool = False,
+                 semantic_feature_dim: int = 768,
+                 semantic_detach_geometry: bool = True,
+                 semantic_grid_config: Optional[Union[str, List[Dict]]] = None,
+                 semantic_multiscale_res: Optional[Sequence[int]] = None,
+                 semantic_linear_decoder_layers: int = 1,
                  **kwargs,
                  ):
         super().__init__()
@@ -60,6 +68,8 @@ class LowrankModel(nn.Module):
         self.concat_features_across_scales = concat_features_across_scales
         self.linear_decoder = linear_decoder
         self.linear_decoder_layers = linear_decoder_layers
+        self.semantic_enabled = semantic_enabled
+        self.semantic_detach_geometry = semantic_detach_geometry
         self.density_act = init_density_activation(density_activation)
         self.timer = CudaTimer(enabled=False)
 
@@ -82,6 +92,18 @@ class LowrankModel(nn.Module):
             linear_decoder_layers=self.linear_decoder_layers,
             num_images=num_images,
         )
+        if self.semantic_enabled:
+            self.semantic_field = SemanticKPlaneField(
+                aabb,
+                grid_config=semantic_grid_config or self.config,
+                concat_features_across_scales=self.concat_features_across_scales,
+                multiscale_res=semantic_multiscale_res or self.multiscale_res,
+                semantic_feature_dim=semantic_feature_dim,
+                spatial_distortion=self.spatial_distortion,
+                linear_decoder_layers=semantic_linear_decoder_layers,
+            )
+        else:
+            self.semantic_field = None
 
         # Initialize proposal-sampling nets
         self.density_fns = []
@@ -165,6 +187,10 @@ class LowrankModel(nn.Module):
         accumulation = torch.sum(weights, dim=-2)
         return accumulation
 
+    @staticmethod
+    def render_features(features: torch.Tensor, weights: torch.Tensor):
+        return torch.sum(weights * features, dim=-2)
+
     def forward(self, rays_o, rays_d, bg_color, near_far: torch.Tensor, timestamps=None):
         """
         rays_o : [batch, 3]
@@ -206,6 +232,21 @@ class LowrankModel(nn.Module):
         if self.training:
             outputs["weights_list"] = weights_list
             outputs["ray_samples_list"] = ray_samples_list
+            if self.semantic_field is not None:
+                semantic_positions = ray_samples.get_positions()
+                semantic_weights = weights
+                semantic_timestamps = timestamps
+                if self.semantic_detach_geometry:
+                    semantic_positions = semantic_positions.detach()
+                    semantic_weights = semantic_weights.detach()
+                    if semantic_timestamps is not None:
+                        semantic_timestamps = semantic_timestamps.detach()
+                semantic_features = self.semantic_field(
+                    semantic_positions, timestamps=semantic_timestamps
+                )
+                outputs["semantic_features"] = self.render_features(
+                    semantic_features, semantic_weights
+                )
         for i in range(self.num_proposal_iterations):
             outputs[f"prop_depth_{i}"] = self.render_depth(
                 weights=weights_list[i], ray_samples=ray_samples_list[i], rays_d=ray_bundle.directions)
@@ -217,8 +258,22 @@ class LowrankModel(nn.Module):
         field_params = model_params["field"] + [p for pnp in pn_params for p in pnp["field"]]
         nn_params = model_params["nn"] + [p for pnp in pn_params for p in pnp["nn"]]
         other_params = model_params["other"] + [p for pnp in pn_params for p in pnp["other"]]
-        return [
+        params = [
             {"params": field_params, "lr": lr},
             {"params": nn_params, "lr": lr},
             {"params": other_params, "lr": lr},
         ]
+        if self.semantic_field is not None:
+            semantic_params = self.semantic_field.get_params()
+            params.extend([
+                {"params": semantic_params["field"], "lr": lr},
+                {"params": semantic_params["nn"], "lr": lr},
+                {"params": semantic_params["other"], "lr": lr},
+            ])
+        return params
+
+    def freeze_rgb_parameters(self):
+        for param in self.field.parameters():
+            param.requires_grad = False
+        for param in self.proposal_networks.parameters():
+            param.requires_grad = False
