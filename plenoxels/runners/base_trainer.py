@@ -23,9 +23,17 @@ from plenoxels.ops.lr_scheduling import (
 )
 
 
-def semantic_cosine_loss(preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-    preds = torch.nn.functional.normalize(preds.float(), dim=-1)
-    targets = torch.nn.functional.normalize(targets.float(), dim=-1)
+def semantic_cosine_loss(
+        preds: torch.Tensor,
+        targets: torch.Tensor,
+        eps: float = 1e-8) -> torch.Tensor:
+    preds = preds.float()
+    targets = targets.float()
+    valid_targets = targets.norm(dim=-1) > eps
+    if not valid_targets.any():
+        return preds.sum() * 0.0
+    preds = torch.nn.functional.normalize(preds[valid_targets], dim=-1, eps=eps)
+    targets = torch.nn.functional.normalize(targets[valid_targets], dim=-1, eps=eps)
     return (1.0 - (preds * targets).sum(dim=-1)).mean()
 
 
@@ -84,6 +92,11 @@ class BaseTrainer(abc.ABC):
     def train_step(self, data, **kwargs) -> bool:
         self.model.train()
         data = self._move_data_to_device(data)
+        if self.train_semantic and "openseg_features" not in data:
+            raise RuntimeError(
+                "semantic training requires openseg_features in each training batch; "
+                "check the dataset semantic cache/config."
+            )
         if "timestamps" not in data:
             data["timestamps"] = None
         self.timer.check("move-to-device")
@@ -104,9 +117,12 @@ class BaseTrainer(abc.ABC):
                     loss = loss + reg_loss
             else:
                 loss = recon_loss.new_zeros((), requires_grad=True)
-            if self.train_semantic and "openseg_features" in data:
+            if self.train_semantic:
                 if "semantic_features" not in fwd_out:
-                    raise KeyError("semantic_features")
+                    raise RuntimeError(
+                        "semantic training requires semantic_features in the model output; "
+                        "check the model semantic branch/config."
+                    )
                 semantic_loss = semantic_cosine_loss(
                     fwd_out["semantic_features"], data["openseg_features"])
                 loss = loss + self.semantic_loss_weight * semantic_loss
@@ -128,10 +144,9 @@ class BaseTrainer(abc.ABC):
                 self.loss_info[f"psnr"].update(-10 * math.log10(recon_loss_val))
                 if semantic_loss is not None:
                     semantic_loss_val = semantic_loss.item()
-                    if "semantic" in self.loss_info:
-                        self.loss_info["semantic"].update(semantic_loss_val)
-                    if "semantic_loss" in self.loss_info:
-                        self.loss_info["semantic_loss"].update(semantic_loss_val)
+                    if "semantic" not in self.loss_info:
+                        self.loss_info["semantic"] = EMA()
+                    self.loss_info["semantic"].update(semantic_loss_val)
                 for r in self.regularizers:
                     r.report(self.loss_info)
 

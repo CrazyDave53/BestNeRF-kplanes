@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+from collections import defaultdict
 
 import torch
 
@@ -34,6 +35,21 @@ class TinyFreezeModel(torch.nn.Module):
         pass
 
 
+class TinySemanticModel(TinyFreezeModel):
+    def __init__(self, emit_semantic=True):
+        super().__init__()
+        self.emit_semantic = emit_semantic
+
+    def forward(self, rays_o, rays_d, bg_color, near_far, timestamps):
+        n_rays = rays_o.shape[0]
+        rgb = self.rgb_param.expand(n_rays, 3)
+        out = {"rgb": rgb}
+        if self.emit_semantic:
+            semantic = self.semantic_param.expand(n_rays, 3)
+            out["semantic_features"] = semantic
+        return out
+
+
 class TinyTrainer(BaseTrainer):
     def eval_step(self, data, **kwargs):
         return {}
@@ -46,6 +62,39 @@ class TinyTrainer(BaseTrainer):
 
     def init_model(self, **kwargs):
         return kwargs["model"]
+
+
+def make_tiny_trainer(model, logdir, **kwargs):
+    params = {
+        "train_data_loader": [],
+        "num_steps": 1,
+        "logdir": logdir,
+        "expname": "semantic-train-step-test",
+        "train_fp16": False,
+        "save_every": -1,
+        "valid_every": -1,
+        "save_outputs": False,
+        "device": "cpu",
+        "model": model,
+        "optim_type": "adam",
+        "lr": 1e-3,
+        "scheduler_type": "cosine",
+    }
+    params.update(kwargs)
+    return TinyTrainer(**params)
+
+
+def make_tiny_batch(include_openseg=True):
+    batch = {
+        "rays_o": torch.zeros((2, 3)),
+        "rays_d": torch.ones((2, 3)),
+        "imgs": torch.zeros((2, 3)),
+        "near_fars": torch.tensor([[0.1, 0.9], [0.1, 0.9]]),
+        "bg_color": torch.zeros((2, 3)),
+    }
+    if include_openseg:
+        batch["openseg_features"] = torch.ones((2, 3))
+    return batch
 
 
 def make_semantic_field(**kwargs):
@@ -127,26 +176,79 @@ class SemanticBranchGradientTest(unittest.TestCase):
 
         self.assertTrue(torch.allclose(loss, torch.tensor(0.0), atol=1e-6))
 
+    def test_cosine_semantic_loss_ignores_zero_target_rows(self):
+        preds = torch.tensor([[0.0, 1.0, 0.0], [4.0, 0.0, 0.0]])
+        targets = torch.tensor([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+
+        loss = base_trainer.semantic_cosine_loss(preds, targets)
+
+        self.assertTrue(torch.allclose(loss, torch.tensor(0.0), atol=1e-6))
+
+    def test_semantic_train_step_creates_semantic_ema_key(self):
+        with tempfile.TemporaryDirectory() as logdir:
+            trainer = make_tiny_trainer(
+                TinySemanticModel(),
+                logdir,
+                train_rgb=False,
+                train_semantic=True,
+                semantic_loss_weight=1.0,
+            )
+            trainer.global_step = 0
+            trainer.loss_info = defaultdict(EMA)
+
+            trainer.train_step(make_tiny_batch())
+            trainer.writer.close()
+
+        self.assertIn("semantic", trainer.loss_info)
+        self.assertIsNotNone(trainer.loss_info["semantic"].value)
+
+    def test_train_semantic_requires_openseg_features(self):
+        with tempfile.TemporaryDirectory() as logdir:
+            trainer = make_tiny_trainer(
+                TinySemanticModel(),
+                logdir,
+                train_rgb=False,
+                train_semantic=True,
+                semantic_loss_weight=1.0,
+            )
+            trainer.global_step = 0
+            trainer.loss_info = defaultdict(EMA)
+
+            with self.assertRaisesRegex(
+                RuntimeError, "semantic training.*openseg_features"
+            ):
+                trainer.train_step(make_tiny_batch(include_openseg=False))
+            trainer.writer.close()
+
+    def test_train_semantic_requires_model_semantic_features(self):
+        with tempfile.TemporaryDirectory() as logdir:
+            trainer = make_tiny_trainer(
+                TinySemanticModel(emit_semantic=False),
+                logdir,
+                train_rgb=False,
+                train_semantic=True,
+                semantic_loss_weight=1.0,
+            )
+            trainer.global_step = 0
+            trainer.loss_info = defaultdict(EMA)
+
+            with self.assertRaisesRegex(
+                RuntimeError, "semantic training.*semantic_features.*model output"
+            ):
+                trainer.train_step(make_tiny_batch())
+            trainer.writer.close()
+
     def test_optimizer_excludes_frozen_rgb_params_after_trainer_freeze(self):
         model = TinyFreezeModel()
 
         with tempfile.TemporaryDirectory() as logdir:
-            trainer = TinyTrainer(
-                train_data_loader=[],
-                num_steps=1,
-                logdir=logdir,
+            trainer = make_tiny_trainer(
+                model,
+                logdir,
                 expname="semantic-freeze-test",
-                train_fp16=False,
-                save_every=-1,
-                valid_every=-1,
-                save_outputs=False,
-                device="cpu",
-                model=model,
-                optim_type="adam",
-                lr=1e-3,
-                scheduler_type="cosine",
                 freeze_rgb_for_semantic=True,
             )
+            trainer.writer.close()
 
         optimized_params = {
             param
