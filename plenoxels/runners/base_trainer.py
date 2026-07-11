@@ -41,6 +41,12 @@ def semantic_cosine_loss(
     return (1.0 - (preds * targets).sum(dim=-1)).mean()
 
 
+def config_bool(value) -> bool:
+    if isinstance(value, str):
+        return value.lower() in ("1", "true", "yes", "y", "on")
+    return bool(value)
+
+
 class BaseTrainer(abc.ABC):
     def __init__(self,
                  train_data_loader: Iterable,
@@ -62,10 +68,25 @@ class BaseTrainer(abc.ABC):
         self.device = device
         self.eval_batch_size = kwargs.get('eval_batch_size', 8129)
         self.extra_args = kwargs
-        self.train_rgb = kwargs.get("train_rgb", True)
-        self.train_semantic = kwargs.get("train_semantic", False)
-        self.freeze_rgb_for_semantic = kwargs.get("freeze_rgb_for_semantic", False)
+        self.train_rgb = config_bool(kwargs.get("train_rgb", True))
+        self.train_semantic = config_bool(kwargs.get("train_semantic", False))
+        self.freeze_rgb_for_semantic = config_bool(
+            kwargs.get("freeze_rgb_for_semantic", False)
+        )
         self.semantic_loss_weight = float(kwargs.get("semantic_loss_weight", 0.0))
+        default_load_optimizer = self.train_rgb and not self.freeze_rgb_for_semantic
+        self.load_optimizer_state = config_bool(
+            kwargs.get(
+                "load_optimizer",
+                kwargs.get("reload_optimizer", default_load_optimizer),
+            )
+        )
+        self.load_scheduler_state = config_bool(
+            kwargs.get(
+                "load_scheduler",
+                kwargs.get("reload_scheduler", self.load_optimizer_state),
+            )
+        )
         if self.train_semantic and self.semantic_loss_weight <= 0.0:
             raise ValueError(
                 "train_semantic=True requires semantic_loss_weight to be positive; "
@@ -122,16 +143,16 @@ class BaseTrainer(abc.ABC):
                 near_far=data['near_fars'], timestamps=data['timestamps'])
             self.timer.check("model-forward")
             # Reconstruction loss
-            recon_loss = self.criterion(fwd_out['rgb'], data['imgs'])
+            recon_loss = None
             semantic_loss = None
+            loss = None
             # Regularization
             if self.train_rgb:
+                recon_loss = self.criterion(fwd_out['rgb'], data['imgs'])
                 loss = recon_loss
                 for r in self.regularizers:
                     reg_loss = r.regularize(self.model, model_out=fwd_out)
                     loss = loss + reg_loss
-            else:
-                loss = recon_loss.new_zeros((), requires_grad=True)
             if self.train_semantic:
                 if "semantic_features" not in fwd_out:
                     raise RuntimeError(
@@ -140,7 +161,10 @@ class BaseTrainer(abc.ABC):
                     )
                 semantic_loss = semantic_cosine_loss(
                     fwd_out["semantic_features"], data["openseg_features"])
-                loss = loss + self.semantic_loss_weight * semantic_loss
+                semantic_objective = self.semantic_loss_weight * semantic_loss
+                loss = semantic_objective if loss is None else loss + semantic_objective
+            if loss is None:
+                raise RuntimeError("training requires at least one enabled objective")
             self.timer.check("regularizaion-forward")
         # Update weights
         self.optimizer.zero_grad(set_to_none=True)
@@ -154,16 +178,18 @@ class BaseTrainer(abc.ABC):
         # Report on losses
         if self.global_step % self.calc_metrics_every == 0:
             with torch.no_grad():
-                recon_loss_val = recon_loss.item()
-                self.loss_info[f"mse"].update(recon_loss_val)
-                self.loss_info[f"psnr"].update(-10 * math.log10(recon_loss_val))
+                if recon_loss is not None:
+                    recon_loss_val = recon_loss.item()
+                    self.loss_info[f"mse"].update(recon_loss_val)
+                    self.loss_info[f"psnr"].update(-10 * math.log10(recon_loss_val))
                 if semantic_loss is not None:
                     semantic_loss_val = semantic_loss.item()
                     if "semantic" not in self.loss_info:
                         self.loss_info["semantic"] = EMA()
                     self.loss_info["semantic"].update(semantic_loss_val)
-                for r in self.regularizers:
-                    r.report(self.loss_info)
+                if self.train_rgb:
+                    for r in self.regularizers:
+                        r.report(self.loss_info)
 
         return scale <= self.gscaler.get_scale()
 
@@ -372,16 +398,24 @@ class BaseTrainer(abc.ABC):
         torch.save(self.get_save_dict(), model_fname)
 
     def load_model(self, checkpoint_data, training_needed: bool = True):
-        self.model.load_state_dict(checkpoint_data["model"], strict=False)
+        load_result = self.model.load_state_dict(checkpoint_data["model"], strict=False)
         log.info("=> Loaded model state from checkpoint")
+        if load_result.missing_keys:
+            log.warning("=> Missing model keys while loading checkpoint: %s", load_result.missing_keys)
+        if load_result.unexpected_keys:
+            log.warning("=> Unexpected model keys while loading checkpoint: %s", load_result.unexpected_keys)
 
-        if training_needed:
+        if training_needed and self.load_optimizer_state:
             self.optimizer.load_state_dict(checkpoint_data["optimizer"])
             log.info("=> Loaded optimizer state from checkpoint")
+        elif training_needed:
+            log.info("=> Skipped optimizer state from checkpoint")
 
-        if training_needed and self.scheduler is not None:
+        if training_needed and self.scheduler is not None and self.load_scheduler_state:
             self.scheduler.load_state_dict(checkpoint_data['lr_scheduler'])
             log.info("=> Loaded scheduler state from checkpoint")
+        elif training_needed and self.scheduler is not None:
+            log.info("=> Skipped scheduler state from checkpoint")
 
         self.global_step = checkpoint_data["global_step"]
         log.info(f"=> Loaded step {self.global_step} from checkpoints")

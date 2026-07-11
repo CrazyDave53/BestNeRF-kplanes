@@ -108,6 +108,33 @@ class OpenSegFeatureCacheTest(unittest.TestCase):
 
         self.assertEqual(load_calls, ["cam00"])
 
+    def test_lookup_reuses_open_mmap_across_calls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_shard(root / "cam00.npy")
+            cache = OpenSegFeatureCache(root, expected_feature_dim=4)
+            original_open_shard = cache._open_shard
+            open_calls = []
+
+            def counted_open_shard(camera_name):
+                open_calls.append(camera_name)
+                return original_open_shard(camera_name)
+
+            cache._open_shard = counted_open_shard
+
+            for _ in range(2):
+                cache.lookup(
+                    camera_names=["cam00", "cam00"],
+                    frame_ids=torch.tensor([0, 1]),
+                    x=torch.tensor([0, 2]),
+                    y=torch.tensor([0, 1]),
+                    rgb_h=2,
+                    rgb_w=3,
+                )
+            cache.close()
+
+        self.assertEqual(open_calls, ["cam00"])
+
     def test_negative_frame_id_raises_clear_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

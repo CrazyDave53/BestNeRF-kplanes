@@ -210,6 +210,8 @@ class SemanticBranchGradientTest(unittest.TestCase):
 
         self.assertIn("semantic", trainer.loss_info)
         self.assertIsNotNone(trainer.loss_info["semantic"].value)
+        self.assertNotIn("mse", trainer.loss_info)
+        self.assertNotIn("psnr", trainer.loss_info)
 
     def test_train_semantic_requires_positive_semantic_loss_weight(self):
         with tempfile.TemporaryDirectory() as logdir:
@@ -339,6 +341,42 @@ class SemanticBranchGradientTest(unittest.TestCase):
         self.assertFalse(model.rgb_param.requires_grad)
         self.assertNotIn(model.rgb_param, optimized_params)
         self.assertIn(model.semantic_param, optimized_params)
+
+    def test_frozen_semantic_checkpoint_load_skips_rgb_optimizer_state(self):
+        source_model = TinyFreezeModel()
+        target_model = TinyFreezeModel()
+
+        with tempfile.TemporaryDirectory() as logdir:
+            source = make_tiny_trainer(
+                source_model,
+                logdir,
+                expname="rgb-checkpoint-source",
+            )
+            source.global_step = 7
+            checkpoint = source.get_save_dict()
+
+            target = make_tiny_trainer(
+                target_model,
+                logdir,
+                expname="semantic-checkpoint-target",
+                train_rgb=False,
+                train_semantic=True,
+                freeze_rgb_for_semantic=True,
+                semantic_loss_weight=1.0,
+            )
+            target.load_model(checkpoint, training_needed=True)
+            source.writer.close()
+            target.writer.close()
+
+        optimized_params = {
+            param
+            for group in target.optimizer.param_groups
+            for param in group["params"]
+        }
+        self.assertEqual(target.global_step, 7)
+        self.assertNotIn(target_model.rgb_param, optimized_params)
+        self.assertIn(target_model.semantic_param, optimized_params)
+        self.assertEqual(len(target.optimizer.param_groups), 1)
 
     def test_semantic_field_outputs_per_sample_features(self):
         field = make_semantic_field()

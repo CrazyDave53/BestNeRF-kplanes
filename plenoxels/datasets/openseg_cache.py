@@ -25,8 +25,9 @@ class OpenSegFeatureCache:
         nested_root = root / "openseg_camckpts"
         self.root = nested_root if nested_root.is_dir() else root
         self.expected_feature_dim = expected_feature_dim
+        self._shards: dict[str, np.ndarray] = {}
 
-    def _load_shard(self, camera_name: str) -> np.ndarray:
+    def _open_shard(self, camera_name: str) -> np.ndarray:
         shard_name = f"{camera_name}.npy"
         shard_path = self.root / shard_name
         if not shard_path.exists():
@@ -44,6 +45,18 @@ class OpenSegFeatureCache:
             )
         return shard
 
+    def _load_shard(self, camera_name: str) -> np.ndarray:
+        if camera_name not in self._shards:
+            self._shards[camera_name] = self._open_shard(camera_name)
+        return self._shards[camera_name]
+
+    def close(self):
+        for shard in self._shards.values():
+            mmap = getattr(shard, "_mmap", None)
+            if mmap is not None:
+                mmap.close()
+        self._shards.clear()
+
     def lookup(
         self,
         camera_names: list[str],
@@ -60,37 +73,39 @@ class OpenSegFeatureCache:
         ):
             raise ValueError("camera_names, frame_ids, x, and y must describe the same batch size")
 
-        shards = {}
-        features = []
-        try:
-            for camera_name in dict.fromkeys(camera_names):
-                shards[camera_name] = self._load_shard(camera_name)
-
-            for idx, camera_name in enumerate(camera_names):
-                shard = shards[camera_name]
-                frame_count, feat_h, feat_w, _ = shard.shape
-                frame_id = int(frame_ids[idx].item())
-                if frame_id < 0 or frame_id >= frame_count:
-                    raise IndexError(
-                        f"OpenSeg feature lookup for camera {camera_name} got frame id "
-                        f"{frame_id}; valid frame count is {frame_count}"
-                    )
-
-                feat_x, feat_y = map_pixels_to_feature_pixels(
-                    x=x[idx],
-                    y=y[idx],
-                    rgb_h=rgb_h,
-                    rgb_w=rgb_w,
-                    feat_h=feat_h,
-                    feat_w=feat_w,
+        features = np.empty((len(camera_names), self.expected_feature_dim), dtype=np.float16)
+        frame_ids_cpu = frame_ids.detach().cpu()
+        x_cpu = x.detach().cpu()
+        y_cpu = y.detach().cpu()
+        for camera_name in dict.fromkeys(camera_names):
+            shard = self._load_shard(camera_name)
+            frame_count, feat_h, feat_w, _ = shard.shape
+            indices = [idx for idx, name in enumerate(camera_names) if name == camera_name]
+            index_tensor = torch.tensor(indices, dtype=torch.long)
+            camera_frame_ids = frame_ids_cpu[index_tensor].long()
+            if (camera_frame_ids < 0).any() or (camera_frame_ids >= frame_count).any():
+                bad_index = int(
+                    ((camera_frame_ids < 0) | (camera_frame_ids >= frame_count))
+                    .nonzero()[0]
+                    .item()
                 )
-                features.append(
-                    np.array(shard[frame_id, int(feat_y.item()), int(feat_x.item())])
+                bad_frame = int(camera_frame_ids[bad_index].item())
+                raise IndexError(
+                    f"OpenSeg feature lookup for camera {camera_name} got frame id "
+                    f"{bad_frame}; valid frame count is {frame_count}"
                 )
-        finally:
-            for shard in shards.values():
-                mmap = getattr(shard, "_mmap", None)
-                if mmap is not None:
-                    mmap.close()
 
-        return torch.from_numpy(np.stack(features, axis=0))
+            feat_x, feat_y = map_pixels_to_feature_pixels(
+                x=x_cpu[index_tensor],
+                y=y_cpu[index_tensor],
+                rgb_h=rgb_h,
+                rgb_w=rgb_w,
+                feat_h=feat_h,
+                feat_w=feat_w,
+            )
+            features[indices] = shard[
+                camera_frame_ids.numpy(),
+                feat_y.numpy(),
+                feat_x.numpy(),
+            ]
+        return torch.from_numpy(features)
