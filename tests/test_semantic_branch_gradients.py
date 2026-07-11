@@ -45,7 +45,14 @@ class TinySemanticModel(TinyFreezeModel):
         rgb = self.rgb_param.expand(n_rays, 3)
         out = {"rgb": rgb}
         if self.emit_semantic:
-            semantic = self.semantic_param.expand(n_rays, 3)
+            semantic = torch.cat(
+                [
+                    self.semantic_param.expand(n_rays, 1),
+                    torch.ones((n_rays, 1), device=rays_o.device),
+                    torch.zeros((n_rays, 1), device=rays_o.device),
+                ],
+                dim=-1,
+            )
             out["semantic_features"] = semantic
         return out
 
@@ -84,7 +91,7 @@ def make_tiny_trainer(model, logdir, **kwargs):
     return TinyTrainer(**params)
 
 
-def make_tiny_batch(include_openseg=True):
+def make_tiny_batch(include_openseg=True, openseg_features=None):
     batch = {
         "rays_o": torch.zeros((2, 3)),
         "rays_d": torch.ones((2, 3)),
@@ -93,7 +100,9 @@ def make_tiny_batch(include_openseg=True):
         "bg_color": torch.zeros((2, 3)),
     }
     if include_openseg:
-        batch["openseg_features"] = torch.ones((2, 3))
+        if openseg_features is None:
+            openseg_features = torch.ones((2, 3))
+        batch["openseg_features"] = openseg_features
     return batch
 
 
@@ -201,6 +210,77 @@ class SemanticBranchGradientTest(unittest.TestCase):
 
         self.assertIn("semantic", trainer.loss_info)
         self.assertIsNotNone(trainer.loss_info["semantic"].value)
+
+    def test_train_semantic_requires_positive_semantic_loss_weight(self):
+        with tempfile.TemporaryDirectory() as logdir:
+            with self.assertRaisesRegex(
+                ValueError, "train_semantic.*semantic_loss_weight.*positive"
+            ):
+                make_tiny_trainer(
+                    TinySemanticModel(),
+                    logdir,
+                    train_rgb=False,
+                    train_semantic=True,
+                )
+
+        with tempfile.TemporaryDirectory() as logdir:
+            with self.assertRaisesRegex(
+                ValueError, "train_semantic.*semantic_loss_weight.*positive"
+            ):
+                make_tiny_trainer(
+                    TinySemanticModel(),
+                    logdir,
+                    train_rgb=False,
+                    train_semantic=True,
+                    semantic_loss_weight=0.0,
+                )
+
+    def test_train_semantic_rejects_batch_without_valid_semantic_targets(self):
+        with tempfile.TemporaryDirectory() as logdir:
+            trainer = make_tiny_trainer(
+                TinySemanticModel(),
+                logdir,
+                train_rgb=False,
+                train_semantic=True,
+                semantic_loss_weight=1.0,
+            )
+            trainer.global_step = 0
+            trainer.loss_info = defaultdict(EMA)
+
+            with self.assertRaisesRegex(
+                RuntimeError, "semantic training.*valid.*openseg_features"
+            ):
+                trainer.train_step(
+                    make_tiny_batch(openseg_features=torch.zeros((2, 3)))
+                )
+            trainer.writer.close()
+
+    def test_semantic_only_train_step_updates_semantic_parameter(self):
+        model = TinySemanticModel()
+        before = model.semantic_param.detach().clone()
+
+        with tempfile.TemporaryDirectory() as logdir:
+            trainer = make_tiny_trainer(
+                model,
+                logdir,
+                train_rgb=False,
+                train_semantic=True,
+                semantic_loss_weight=1.0,
+            )
+            trainer.global_step = 0
+            trainer.loss_info = defaultdict(EMA)
+
+            trainer.train_step(
+                make_tiny_batch(
+                    openseg_features=torch.tensor(
+                        [[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]]
+                    )
+                )
+            )
+            trainer.writer.close()
+
+        self.assertIsNotNone(model.semantic_param.grad)
+        self.assertFalse(torch.allclose(model.semantic_param.detach(), before))
 
     def test_train_semantic_requires_openseg_features(self):
         with tempfile.TemporaryDirectory() as logdir:

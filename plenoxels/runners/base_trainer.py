@@ -23,13 +23,17 @@ from plenoxels.ops.lr_scheduling import (
 )
 
 
+def semantic_target_valid_mask(targets: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    return targets.float().norm(dim=-1) > eps
+
+
 def semantic_cosine_loss(
         preds: torch.Tensor,
         targets: torch.Tensor,
         eps: float = 1e-8) -> torch.Tensor:
     preds = preds.float()
     targets = targets.float()
-    valid_targets = targets.norm(dim=-1) > eps
+    valid_targets = semantic_target_valid_mask(targets, eps=eps)
     if not valid_targets.any():
         return preds.sum() * 0.0
     preds = torch.nn.functional.normalize(preds[valid_targets], dim=-1, eps=eps)
@@ -62,6 +66,11 @@ class BaseTrainer(abc.ABC):
         self.train_semantic = kwargs.get("train_semantic", False)
         self.freeze_rgb_for_semantic = kwargs.get("freeze_rgb_for_semantic", False)
         self.semantic_loss_weight = float(kwargs.get("semantic_loss_weight", 0.0))
+        if self.train_semantic and self.semantic_loss_weight <= 0.0:
+            raise ValueError(
+                "train_semantic=True requires semantic_loss_weight to be positive; "
+                "set semantic_loss_weight > 0 to enable a semantic objective."
+            )
         self.timer = CudaTimer(enabled=False)
 
         self.log_dir = os.path.join(logdir, expname)
@@ -96,6 +105,12 @@ class BaseTrainer(abc.ABC):
             raise RuntimeError(
                 "semantic training requires openseg_features in each training batch; "
                 "check the dataset semantic cache/config."
+            )
+        if self.train_semantic and not semantic_target_valid_mask(
+                data["openseg_features"]).any():
+            raise RuntimeError(
+                "semantic training requires at least one valid target row in "
+                "openseg_features; got only zero/invalid semantic targets."
             )
         if "timestamps" not in data:
             data["timestamps"] = None
