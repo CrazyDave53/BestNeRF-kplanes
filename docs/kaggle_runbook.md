@@ -294,6 +294,57 @@ Create a new version later:
 kaggle datasets version -p "$DATASET_DIR" -m "Update OpenSeg ds16 64f cache" -t -r tar
 ```
 
+## Semantic Branch Smoke Training
+
+Start from the K-Planes repo root and export the CUDA/tiny-cuda-nn paths for the current shell:
+
+```bash
+cd /kaggle/working/BestNeRF/k-planes
+
+export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
+export LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda-12.8/compat:$LIBRARY_PATH
+export TCNN_CUDA_ARCHITECTURES=75
+```
+
+Verify the packaged OpenSeg cache dataset is attached and readable:
+
+```bash
+find /kaggle/input/coffee-martini-openseg-ds16-64f -maxdepth 4 -type f | head -20
+find /kaggle/input/coffee-martini-openseg-ds16-64f -type f -name 'cam*.npy' | head
+```
+
+Run the 20-step semantic smoke training config:
+
+```bash
+PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_smoke.py
+```
+
+Expected smoke result:
+
+```text
+20 training steps complete
+semantic loss appears in progress output or logging
+checkpoint written at logs/baseline/cm_semantic_smoke/model.pth
+```
+
+After semantic smoke passes, run the RGB-only smoke config as well to prove the semantic branch did not regress the existing RGB baseline.
+
+Semantic trainer guardrails should fail early if `semantic_loss_weight` is not positive, if `openseg_features` does not exist, or if semantic targets are all zeros.
+
+For the real ds16/64-frame semantic run:
+
+```bash
+PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16.py
+```
+
+Local/unit verification:
+
+```bash
+PYTHONPATH=. pytest tests
+```
+
+Torch and `tinycudann` tests may need the Kaggle GPU runtime rather than a local CPU-only environment.
+
 ## Common Failures
 
 ### `SavedModel file does not exist`
