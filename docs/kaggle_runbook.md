@@ -309,8 +309,22 @@ export TCNN_CUDA_ARCHITECTURES=75
 Verify the packaged OpenSeg cache dataset is attached and readable:
 
 ```bash
-find /kaggle/input/coffee-martini-openseg-ds16-64f -maxdepth 4 -type f | head -20
-find /kaggle/input/coffee-martini-openseg-ds16-64f -type f -name 'cam*.npy' | head
+CACHE_ROOT=/kaggle/input/coffee-martini-openseg-ds16-64f
+
+if find "$CACHE_ROOT" -maxdepth 1 -type f -name 'cam*.npy' | grep -q .; then
+  echo "OpenSeg cam files found directly under $CACHE_ROOT"
+  find "$CACHE_ROOT" -maxdepth 1 -type f -name 'cam*.npy' | head
+elif find "$CACHE_ROOT/openseg_camckpts" -maxdepth 1 -type f -name 'cam*.npy' | grep -q .; then
+  echo "OpenSeg cam files found under $CACHE_ROOT/openseg_camckpts"
+  find "$CACHE_ROOT/openseg_camckpts" -maxdepth 1 -type f -name 'cam*.npy' | head
+else
+  echo "No cam*.npy files found where the semantic configs expect them."
+  echo "Adjust the config/path, or create a symlink/copy layout so cam files are at:"
+  echo "  $CACHE_ROOT"
+  echo "or:"
+  echo "  $CACHE_ROOT/openseg_camckpts"
+  false
+fi
 ```
 
 Run the 20-step semantic smoke training config:
@@ -322,12 +336,16 @@ PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dyne
 Expected smoke result:
 
 ```text
-20 training steps complete
+tqdm/progress reaches 20/20
 semantic loss appears in progress output or logging
-checkpoint written at logs/baseline/cm_semantic_smoke/model.pth
+checkpoint exists at logs/baseline/cm_semantic_smoke/model.pth
 ```
 
 After semantic smoke passes, run the RGB-only smoke config as well to prove the semantic branch did not regress the existing RGB baseline.
+
+```bash
+PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_baseline_smoke.py
+```
 
 Semantic trainer guardrails should fail early if `semantic_loss_weight` is not positive, if `openseg_features` does not exist, or if semantic targets are all zeros.
 
