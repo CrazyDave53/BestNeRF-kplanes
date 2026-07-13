@@ -30,6 +30,7 @@ python -m pip install \
   scikit-image \
   configargparse \
   tensorboard \
+  open_clip_torch \
   tensorflow
 
 mkdir -p "${TCNN_WHEEL_DIR}"
@@ -78,7 +79,7 @@ python - <<'PY'
 import importlib
 import torch
 
-for name in ["torch", "tinycudann", "cv2", "imageio", "av", "lpips", "pandas", "torchmetrics", "skimage", "tensorflow"]:
+for name in ["torch", "tinycudann", "cv2", "imageio", "av", "lpips", "pandas", "torchmetrics", "skimage", "open_clip", "tensorflow"]:
     mod = importlib.import_module(name)
     print(name, getattr(mod, "__version__", "unknown"))
 
