@@ -416,6 +416,13 @@ def resize_scores_to_mask(scores: np.ndarray, mask_shape: tuple[int, int]) -> np
     return np.array(resized, dtype=np.float32)
 
 
+def display_heatmap_for_rgb(heatmap: np.ndarray, rgb: np.ndarray) -> np.ndarray:
+    rgb_shape = rgb.shape[:2]
+    if heatmap.shape == rgb_shape:
+        return heatmap
+    return resize_scores_to_mask(heatmap, rgb_shape)
+
+
 def evaluate_annotations(
     annotation_dir: Path,
     rows: Sequence[dict[str, str]],
@@ -489,14 +496,16 @@ def evaluate_annotations(
             row_dir = output_dir / "renders"
             rgb_u8 = np.clip(np.round(rgb * 255.0), 0, 255).astype(np.uint8)
             heatmap_u8 = np.clip(np.round(heatmap * 255.0), 0, 255).astype(np.uint8)
-            heatmap_color = colorize_heatmap(heatmap)
+            display_heatmap = display_heatmap_for_rgb(heatmap, rgb_u8)
+            heatmap_color = colorize_heatmap(display_heatmap)
             write_png(row_dir / f"{stem}_rgb.png", rgb_u8)
             write_png(row_dir / f"{stem}_heatmap.png", heatmap_u8)
             write_png(row_dir / f"{stem}_overlay.png", overlay_heatmap(rgb_u8, heatmap_color))
             np.save(row_dir / f"{stem}_scores.npy", raw_scores.astype(np.float32))
             if teacher_row is not None:
                 teacher_stem = f"{camera}_frame{frame:03d}_{query}_teacher"
-                teacher_color = colorize_heatmap(teacher_heatmap)
+                teacher_display_heatmap = display_heatmap_for_rgb(teacher_heatmap, rgb_u8)
+                teacher_color = colorize_heatmap(teacher_display_heatmap)
                 write_png(
                     row_dir / f"{teacher_stem}_heatmap.png",
                     np.clip(np.round(teacher_heatmap * 255.0), 0, 255).astype(np.uint8),

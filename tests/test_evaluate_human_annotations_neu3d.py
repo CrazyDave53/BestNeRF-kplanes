@@ -13,6 +13,7 @@ from scripts.evaluate_human_annotations_neu3d import (
     compute_psnr,
     compute_ssim,
     compute_teacher_scores,
+    display_heatmap_for_rgb,
     group_metric_rows,
     load_annotation_rows,
     make_metric_row,
@@ -63,6 +64,14 @@ class EvaluateHumanAnnotationsNeu3DTest(unittest.TestCase):
         image = np.full((16, 16, 3), 0.5, dtype=np.float32)
 
         self.assertAlmostEqual(compute_ssim(image, image), 1.0)
+
+    def test_display_heatmap_for_rgb_resizes_mask_sized_heatmap_to_rgb_shape(self):
+        heatmap = np.zeros((4, 6), dtype=np.float32)
+        rgb = np.zeros((2, 3, 3), dtype=np.uint8)
+
+        resized = display_heatmap_for_rgb(heatmap, rgb)
+
+        self.assertEqual(resized.shape, (2, 3))
 
     def test_load_annotation_rows_keeps_accepted_and_corrected(self):
         with tempfile.TemporaryDirectory() as tmpdir:
