@@ -12,8 +12,10 @@ from scripts.evaluate_human_annotations_neu3d import (
     compute_mask_metrics,
     compute_psnr,
     compute_ssim,
+    compute_teacher_scores,
     group_metric_rows,
     load_annotation_rows,
+    make_metric_row,
 )
 
 
@@ -92,18 +94,56 @@ class EvaluateHumanAnnotationsNeu3DTest(unittest.TestCase):
 
     def test_group_metric_rows_averages_numeric_values_by_query(self):
         rows = [
-            {"query": "human", "frame": 0, "ap": 0.5, "psnr": 20.0},
-            {"query": "human", "frame": 8, "ap": 1.0, "psnr": 30.0},
-            {"query": "hand", "frame": 0, "ap": 0.25, "psnr": 10.0},
+            {"method": "student_kplanes", "query": "human", "frame": 0, "ap": 0.5, "psnr": 20.0},
+            {"method": "student_kplanes", "query": "human", "frame": 8, "ap": 1.0, "psnr": 30.0},
+            {"method": "teacher_openseg", "query": "human", "frame": 0, "ap": 0.25, "psnr": np.nan},
         ]
 
-        grouped = group_metric_rows(rows, keys=["query"])
+        grouped = group_metric_rows(rows, keys=["method", "query"])
+        by_method = {row["method"]: row for row in grouped}
 
-        self.assertEqual(grouped[0]["query"], "hand")
-        self.assertEqual(grouped[0]["count"], 1)
-        self.assertNotIn("frame", grouped[0])
-        self.assertAlmostEqual(grouped[1]["ap"], 0.75)
-        self.assertAlmostEqual(grouped[1]["psnr"], 25.0)
+        self.assertEqual(by_method["teacher_openseg"]["count"], 1)
+        self.assertNotIn("frame", by_method["teacher_openseg"])
+        self.assertAlmostEqual(by_method["teacher_openseg"]["ap"], 0.25)
+        self.assertTrue(np.isnan(by_method["teacher_openseg"]["psnr"]))
+        self.assertEqual(by_method["student_kplanes"]["count"], 2)
+        self.assertAlmostEqual(by_method["student_kplanes"]["ap"], 0.75)
+        self.assertAlmostEqual(by_method["student_kplanes"]["psnr"], 25.0)
+
+    def test_compute_teacher_scores_uses_normalized_dot_product(self):
+        shard = np.zeros((1, 2, 2, 3), dtype=np.float16)
+        shard[0, 0, 0] = [1, 0, 0]
+        shard[0, 0, 1] = [0, 1, 0]
+        shard[0, 1, 0] = [0, 0, 2]
+        shard[0, 1, 1] = [1, 1, 0]
+
+        scores = compute_teacher_scores(
+            shard=shard,
+            frame_id=0,
+            text_feature=np.array([1, 0, 0], dtype=np.float32),
+        )
+
+        np.testing.assert_allclose(scores, [[1.0, 0.0], [0.0, 2 ** -0.5]], atol=1e-4)
+
+    def test_make_metric_row_records_method_name(self):
+        row = {"query": "human", "camera": "cam01", "frame": "0", "status": "accepted",
+               "mask_path": "masks/human/cam01_frame000.png"}
+        mask = np.array([[True, False], [False, False]])
+        scores = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.float32)
+
+        out = make_metric_row(
+            source_row=row,
+            method="teacher_openseg",
+            heatmap=scores,
+            mask=mask,
+            fixed_threshold=0.5,
+            psnr=np.nan,
+            ssim=np.nan,
+        )
+
+        self.assertEqual(out["method"], "teacher_openseg")
+        self.assertEqual(out["query"], "human")
+        self.assertAlmostEqual(out["ap"], 1.0)
 
 
 if __name__ == "__main__":

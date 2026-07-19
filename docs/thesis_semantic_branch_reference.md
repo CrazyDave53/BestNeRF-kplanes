@@ -337,6 +337,7 @@ python scripts/evaluate_human_annotations_neu3d.py \
   --annotation-dir /kaggle/working/coffee_martini_human_annotations \
   --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16.py \
   --checkpoint "$CKPT" \
+  --teacher-cache-dir /kaggle/input/coffee-martini-openseg-ds16-64f \
   --output-dir /kaggle/working/cm_semantic_64f_ds16_human_eval \
   --batch-size 2048 \
   --amp
@@ -345,13 +346,22 @@ python scripts/evaluate_human_annotations_neu3d.py \
 Outputs:
 
 - `per_annotation_metrics.csv`
+- `metrics_by_method_query.csv`
+- `metrics_by_method.csv`
 - `metrics_by_query.csv`
 - `metrics_overall.csv`
 - rendered RGB/heatmap/overlay images under `renders/`
 
-This command also reports PSNR and SSIM on the annotated training frames. That
-is useful evidence that the checkpoint reconstructs the reviewed views, but it
-does not replace the standard RGB table on held-out/test views. For thesis RGB
+With `--teacher-cache-dir`, the same table contains two semantic methods:
+
+- `student_kplanes`: rendered K-Planes semantic heatmap vs human mask.
+- `teacher_openseg`: cached OpenSeg teacher heatmap vs human mask.
+
+This is the fairest first semantic comparison because both teacher and student
+are evaluated against the same human-reviewed masks. The command also reports
+PSNR and SSIM for `student_kplanes` on the annotated training frames. That is
+useful evidence that the checkpoint reconstructs the reviewed views, but it does
+not replace the standard RGB table on held-out/test views. For thesis RGB
 quality, still report PSNR, SSIM, and ideally LPIPS on the normal validation
 split.
 

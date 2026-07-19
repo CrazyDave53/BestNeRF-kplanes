@@ -124,6 +124,19 @@ def compute_mask_metrics(
     }
 
 
+def compute_teacher_scores(
+    shard: np.ndarray,
+    frame_id: int,
+    text_feature: np.ndarray,
+) -> np.ndarray:
+    features = shard[frame_id].astype(np.float32)
+    text_feature = text_feature.astype(np.float32, copy=False)
+    text_feature = text_feature / max(float(np.linalg.norm(text_feature)), 1e-8)
+    feature_norms = np.linalg.norm(features, axis=-1, keepdims=True)
+    normalized = features / np.maximum(feature_norms, 1e-8)
+    return normalized @ text_feature
+
+
 def compute_psnr(pred: np.ndarray, target: np.ndarray) -> float:
     pred = pred.astype(np.float32, copy=False)
     target = target.astype(np.float32, copy=False)
@@ -171,6 +184,33 @@ def load_annotation_rows(path: Path, statuses: set[str]) -> list[dict[str, str]]
     return [row for row in rows if row.get("status", "") in statuses]
 
 
+def make_metric_row(
+    source_row: dict[str, str],
+    method: str,
+    heatmap: np.ndarray,
+    mask: np.ndarray,
+    fixed_threshold: float,
+    psnr: float,
+    ssim: float,
+) -> dict[str, Any]:
+    mask_metrics = compute_mask_metrics(
+        heatmap,
+        mask,
+        fixed_threshold=fixed_threshold,
+    )
+    return {
+        "method": method,
+        "query": source_row["query"],
+        "camera": source_row["camera"],
+        "frame": int(source_row["frame"]),
+        "status": source_row["status"],
+        "mask_path": source_row["mask_path"],
+        **mask_metrics,
+        "psnr": psnr,
+        "ssim": ssim,
+    }
+
+
 def write_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
@@ -201,7 +241,7 @@ def group_metric_rows(rows: Sequence[dict[str, Any]], keys: Sequence[str]) -> li
         ]
         for key in numeric_keys:
             values = np.asarray([row[key] for row in group_rows], dtype=np.float64)
-            summary[key] = float(np.nanmean(values))
+            summary[key] = float("nan") if np.isnan(values).all() else float(np.nanmean(values))
         out.append(summary)
     return out
 
@@ -365,6 +405,7 @@ def evaluate_annotations(
     rows: Sequence[dict[str, str]],
     trainer,
     text_features: dict[str, Any],
+    teacher_cache_dir: Path | None,
     output_dir: Path,
     batch_size: int,
     use_amp: bool,
@@ -372,6 +413,7 @@ def evaluate_annotations(
     save_images: bool,
 ) -> list[dict[str, Any]]:
     rendered: dict[tuple[str, int, str], tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    teacher_shards: dict[str, np.ndarray] = {}
     metric_rows = []
     for row in rows:
         camera = row["camera"]
@@ -390,25 +432,45 @@ def evaluate_annotations(
         rgb, raw_scores, gt_rgb = rendered[key]
         mask = binary_mask_from_image(np.array(Image.open(annotation_dir / row["mask_path"])))
         heatmap = normalize_scores(resize_scores_to_mask(raw_scores, mask.shape))
-        mask_metrics = compute_mask_metrics(
-            heatmap,
-            mask,
-            fixed_threshold=fixed_threshold,
-        )
         psnr = compute_psnr(rgb, gt_rgb)
         ssim = compute_ssim(rgb, gt_rgb)
+        student_row = make_metric_row(
+            source_row=row,
+            method="student_kplanes",
+            heatmap=heatmap,
+            mask=mask,
+            fixed_threshold=fixed_threshold,
+            psnr=psnr,
+            ssim=ssim,
+        )
+        metric_rows.append(student_row)
 
-        out_row = {
-            "query": query,
-            "camera": camera,
-            "frame": frame,
-            "status": row["status"],
-            "mask_path": row["mask_path"],
-            **mask_metrics,
-            "psnr": psnr,
-            "ssim": ssim,
-        }
-        metric_rows.append(out_row)
+        teacher_row = None
+        if teacher_cache_dir is not None:
+            if camera not in teacher_shards:
+                shard_root = (
+                    teacher_cache_dir / "openseg_camckpts"
+                    if (teacher_cache_dir / "openseg_camckpts").is_dir()
+                    else teacher_cache_dir
+                )
+                teacher_shards[camera] = np.load(shard_root / f"{camera}.npy", mmap_mode="r")
+            text_np = text_features[query].detach().cpu().numpy()
+            teacher_scores = compute_teacher_scores(
+                shard=teacher_shards[camera],
+                frame_id=frame,
+                text_feature=text_np,
+            )
+            teacher_heatmap = normalize_scores(resize_scores_to_mask(teacher_scores, mask.shape))
+            teacher_row = make_metric_row(
+                source_row=row,
+                method="teacher_openseg",
+                heatmap=teacher_heatmap,
+                mask=mask,
+                fixed_threshold=fixed_threshold,
+                psnr=np.nan,
+                ssim=np.nan,
+            )
+            metric_rows.append(teacher_row)
 
         if save_images:
             stem = f"{camera}_frame{frame:03d}_{query}"
@@ -420,10 +482,21 @@ def evaluate_annotations(
             write_png(row_dir / f"{stem}_heatmap.png", heatmap_u8)
             write_png(row_dir / f"{stem}_overlay.png", overlay_heatmap(rgb_u8, heatmap_color))
             np.save(row_dir / f"{stem}_scores.npy", raw_scores.astype(np.float32))
+            if teacher_row is not None:
+                teacher_stem = f"{camera}_frame{frame:03d}_{query}_teacher"
+                teacher_color = colorize_heatmap(teacher_heatmap)
+                write_png(
+                    row_dir / f"{teacher_stem}_heatmap.png",
+                    np.clip(np.round(teacher_heatmap * 255.0), 0, 255).astype(np.uint8),
+                )
+                write_png(
+                    row_dir / f"{teacher_stem}_overlay.png",
+                    overlay_heatmap(rgb_u8, teacher_color),
+                )
         print(
             f"{camera} frame {frame:03d} {query}: "
-            f"AP={out_row['ap']:.4f} IoU@{fixed_threshold:.2f}="
-            f"{out_row[f'iou_at_{fixed_threshold:.2f}']:.4f} "
+            f"student AP={student_row['ap']:.4f} IoU@{fixed_threshold:.2f}="
+            f"{student_row[f'iou_at_{fixed_threshold:.2f}']:.4f} "
             f"PSNR={psnr:.2f} SSIM={ssim:.4f}"
         )
     return metric_rows
@@ -438,6 +511,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--annotation-dir", type=Path, required=True)
     parser.add_argument("--config-path", required=True)
     parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--teacher-cache-dir", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--statuses", default="accepted,corrected")
     parser.add_argument("--batch-size", type=int, default=4096)
@@ -472,6 +546,7 @@ def main() -> None:
         rows=rows,
         trainer=trainer,
         text_features=text_features,
+        teacher_cache_dir=args.teacher_cache_dir,
         output_dir=args.output_dir,
         batch_size=args.batch_size,
         use_amp=args.amp,
@@ -480,7 +555,12 @@ def main() -> None:
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_csv(args.output_dir / "per_annotation_metrics.csv", metric_rows)
+    write_csv(
+        args.output_dir / "metrics_by_method_query.csv",
+        group_metric_rows(metric_rows, keys=["method", "query"]),
+    )
     write_csv(args.output_dir / "metrics_by_query.csv", group_metric_rows(metric_rows, keys=["query"]))
+    write_csv(args.output_dir / "metrics_by_method.csv", group_metric_rows(metric_rows, keys=["method"]))
     write_csv(args.output_dir / "metrics_overall.csv", group_metric_rows(metric_rows, keys=[]))
     print(f"Wrote metrics to {args.output_dir}")
 

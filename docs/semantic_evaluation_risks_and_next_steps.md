@@ -336,6 +336,7 @@ python scripts/evaluate_human_annotations_neu3d.py \
   --annotation-dir /kaggle/working/coffee_martini_human_annotations \
   --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16.py \
   --checkpoint "$CKPT" \
+  --teacher-cache-dir /kaggle/input/coffee-martini-openseg-ds16-64f \
   --output-dir /kaggle/working/cm_semantic_64f_ds16_human_eval \
   --batch-size 2048 \
   --amp
@@ -344,9 +345,15 @@ python scripts/evaluate_human_annotations_neu3d.py \
 This writes:
 
 - `per_annotation_metrics.csv`
+- `metrics_by_method_query.csv`
+- `metrics_by_method.csv`
 - `metrics_by_query.csv`
 - `metrics_overall.csv`
 - rendered RGB/heatmap/overlay images under `renders/`
+
+With `--teacher-cache-dir`, the semantic rows include both `student_kplanes`
+and `teacher_openseg` against the same human-reviewed masks. This is the fairest
+first comparison table.
 
 The same run reports PSNR and SSIM for the annotated training frames. For the
 final thesis RGB-quality table, still run standard held-out/test-view PSNR,
