@@ -145,6 +145,9 @@ Why first:
 It is fast, uses the existing checkpoint, and tells us if the project is alive
 before building metric machinery.
 
+Status:
+Done for the current checkpoint, and the result looked good enough to continue.
+
 Expected output:
 
 - `rgb.png`
@@ -157,7 +160,105 @@ Decision:
 If the heatmap does not activate on the person/hands at all, pause metrics and
 debug feature rendering/checkpoint loading first.
 
-### 2. Reproduce Teacher-Vs-Student Metrics
+### 2. Build Model-Assisted Human Annotations
+
+Purpose:
+Create a reusable evaluation set that does not depend on OpenSeg as both teacher
+and judge.
+
+Annotation method:
+
+1. Extract RGB frames from Coffee Martini at the same resolution used for
+   evaluation.
+2. Use Grounded-SAM2 or an equivalent strong segmentation model to propose
+   initial masks from text prompts.
+3. Save binary masks and overlay images.
+4. Human-review every mask.
+5. Correct, reject, or mark ambiguous masks before inclusion.
+6. Only accepted or corrected masks enter the benchmark manifest.
+
+Thesis wording:
+
+> We construct a human-annotated evaluation set using a model-assisted
+> annotation workflow. Grounded-SAM2 proposes initial masks, and every mask is
+> manually reviewed and corrected or rejected before inclusion.
+
+Recommended first queries:
+
+- `human`
+- `hand`
+- `glass`
+- `cup`
+- `table`
+
+Recommended first subset:
+
+- cameras: start with `cam00`, then add 1 to 2 more views;
+- frames: 8 to 12 frames across the 64-frame semantic cache;
+- queries: start with `human` and `hand`, then add object queries.
+
+Suggested layout:
+
+```text
+coffee_martini_human_annotations/
+  manifest.csv
+  images/
+    cam00_frame000.png
+  masks/
+    human/
+      cam00_frame000.png
+    hand/
+      cam00_frame000.png
+  overlays/
+    human/
+      cam00_frame000_overlay.png
+```
+
+Suggested manifest columns:
+
+```text
+image_path,mask_path,query,camera,frame,status,source,reviewer,notes
+```
+
+Valid statuses:
+
+- `accepted`
+- `corrected`
+- `rejected`
+- `ambiguous`
+
+Decision:
+This is now the highest-priority dataset artifact. It is reusable across future
+checkpoints and lets us report human-mask metrics without saving every model
+between sessions.
+
+### 3. Compute Human-Mask Metrics
+
+Purpose:
+Evaluate the current semantic model against reviewed human annotations.
+
+Metrics:
+
+- IoU at fixed threshold 0.5.
+- Best IoU over thresholds.
+- AP from continuous heatmaps.
+- Precision.
+- Recall.
+- F1.
+
+Heatmap-to-mask protocol:
+
+- render semantic query score map;
+- resize the score map to the annotation mask resolution if needed;
+- normalize scores to [0, 1] per image;
+- compute AP on continuous scores;
+- compute thresholded metrics at fixed and best thresholds.
+
+Decision:
+This becomes the main thesis-strength table because the target is no longer
+OpenSeg.
+
+### 4. Reproduce Teacher-Vs-Student Metrics
 
 Purpose:
 Match the thesis evaluation protocol.
@@ -188,9 +289,10 @@ Metrics:
 - Spearman correlation.
 
 Decision:
-This gives the first serious number table for our current branch.
+This still matters, but it is secondary to human-mask metrics. It shows whether
+the student preserved OpenSeg behavior.
 
-### 3. Add Cosine + SmoothL1
+### 5. Add Cosine + SmoothL1
 
 Purpose:
 Move current training closer to the thesis main method.
@@ -207,7 +309,7 @@ Implementation idea:
 Decision:
 Run the same 64-frame setup first. If it improves teacher metrics, scale later.
 
-### 4. Add Semantic Rendering Modes
+### 6. Add Semantic Rendering Modes
 
 Purpose:
 Test the thesis claim that semantic volume rendering is better than single-point
@@ -361,7 +463,33 @@ nice but probably expensive.
 Exit condition:
 At least one rendered frame clearly shows a plausible `human` response.
 
-### Stage B: Build The Metric Script
+Status:
+Done for the current checkpoint.
+
+### Stage B: Build The Human Annotation Set
+
+1. Extract eval RGB frames from selected cameras/timestamps.
+2. Generate initial masks with Grounded-SAM2.
+3. Save masks and overlays.
+4. Human-review every mask.
+5. Keep only accepted/corrected masks in `manifest.csv`.
+6. Save the annotation set as a durable dataset.
+
+Exit condition:
+A reviewed human annotation set exists for at least `human` and `hand`.
+
+### Stage C: Build The Human-Metric Script
+
+1. Render student query heatmaps for every annotation row.
+2. Resize/normalize heatmaps to match mask resolution.
+3. Compute AP, IoU, best IoU, precision, recall, and F1.
+4. Write CSV/JSON tables.
+
+Exit condition:
+A human-mask metric table exists for the current cosine-only/full-weighted
+branch.
+
+### Stage D: Build The Teacher-Metric Script
 
 1. Render student semantic features for chosen camera/frame/query set.
 2. Load OpenSeg cached teacher features for matching frames.
@@ -372,26 +500,25 @@ At least one rendered frame clearly shows a plausible `human` response.
 Exit condition:
 A table exists for the current cosine-only/full-weighted branch.
 
-### Stage C: Match The Thesis Method
+### Stage E: Match The Thesis Method
 
 1. Add normalized SmoothL1.
 2. Add semantic rendering modes.
 3. Run `full_weighted` vs `topk_weighted K=24`.
-4. Compare against Stage B metrics.
+4. Compare against both human-mask and teacher-agreement metrics.
 
 Exit condition:
 We know whether the thesis final recipe improves our current code.
 
-### Stage D: Strengthen The Science
+### Stage F: Strengthen The Science
 
-1. Add manual masks for `human` and `hand`.
-2. Add RGB PSNR/SSIM/LPIPS.
-3. Add Temporal-TV only if the `human` query remains important.
-4. Add another scene only if time and Kaggle storage allow.
+1. Add RGB PSNR/SSIM/LPIPS.
+2. Add Temporal-TV only if the `human` query remains important.
+3. Add another scene only if time and Kaggle storage allow.
 
 Exit condition:
-We can defend the thesis claims without relying only on OpenSeg teacher
-agreement.
+We can defend the thesis claims with human annotations, teacher agreement, and
+RGB quality evidence.
 
 ## Practical Notes For Kaggle
 
@@ -413,12 +540,12 @@ export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda-12.8/compat:$LD_L
 
 ## Bottom Line
 
-The thesis already contains the most important caveat: without manual masks,
+The thesis already contains the most important caveat: without human masks,
 evaluation measures OpenSeg teacher preservation, not absolute semantic
-correctness. Our next best move is therefore not another large training run.
-It is:
+correctness. P0 visual inspection is done, so the next best move is not another
+large training run. It is:
 
-1. render and inspect `human`;
-2. reproduce teacher-vs-student metrics;
-3. add SmoothL1/top-k to match the thesis method;
-4. add a tiny manual mask set so the strongest claims have independent support.
+1. build model-assisted human annotations and review every mask;
+2. compute human-mask metrics for the current checkpoint;
+3. reproduce teacher-vs-student metrics as a secondary table;
+4. add SmoothL1/top-k to match the thesis method and compare again.

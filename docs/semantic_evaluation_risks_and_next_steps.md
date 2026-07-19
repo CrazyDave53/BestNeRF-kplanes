@@ -116,6 +116,10 @@ The critique calls out missing evidence for:
 Goal:
 Verify that the trained semantic branch produces interpretable output.
 
+Status:
+Done for the current checkpoint. The `human` visualization looked good enough
+to move on to annotation and metrics.
+
 Run the existing script on several frames:
 
 ```bash
@@ -188,12 +192,22 @@ Not:
 
 > The model segments objects correctly.
 
-### Experiment 3: Small Human Ground Truth Mask Set
+### Experiment 3: Model-Assisted Human Annotation Set
 
 Goal:
 Break the teacher-student evaluation loop.
 
-Small but valuable dataset:
+We will use a strong segmentation model, such as Grounded-SAM2, to propose
+initial masks, but the benchmark should be described as human annotated because
+every mask is reviewed and corrected or rejected by a human before inclusion.
+
+Thesis wording:
+
+> We construct a human-annotated evaluation set using a model-assisted
+> annotation workflow. Grounded-SAM2 proposes initial masks, and every mask is
+> manually reviewed and corrected or rejected before inclusion.
+
+Small but valuable first dataset:
 
 - 5 to 10 frames.
 - 1 to 3 camera views.
@@ -206,12 +220,40 @@ Start with:
 - `glass`
 - `table`
 
-Manual annotation can be rough binary masks. Even a small set is much stronger
-than zero human ground truth.
+Suggested annotation layout:
+
+```text
+coffee_martini_human_annotations/
+  manifest.csv
+  images/
+    cam00_frame000.png
+  masks/
+    human/
+      cam00_frame000.png
+  overlays/
+    human/
+      cam00_frame000_overlay.png
+```
+
+Suggested manifest columns:
+
+```text
+image_path,mask_path,query,camera,frame,status,source,reviewer,notes
+```
+
+Accepted statuses:
+
+- `accepted`
+- `corrected`
+- `rejected`
+- `ambiguous`
+
+Only `accepted` and `corrected` masks should be used for metrics.
 
 Metrics:
 
 - IoU.
+- best IoU over thresholds.
 - mIoU.
 - precision.
 - recall.
@@ -221,6 +263,9 @@ Metrics:
 This lets us say:
 
 > On a small manually labeled subset, the model reaches X IoU for query `human`.
+
+This is now the highest-priority next experiment because the masks are reusable
+across future checkpoints and do not require preserving every training session.
 
 ### Experiment 4: Semantic Rendering Strategy Ablation
 
@@ -391,14 +436,15 @@ Without this protocol, call the output a "query heatmap", not a "mask" or
 
 ## Suggested Priority Order
 
-1. Render `human` overlays from the trained checkpoint.
-2. Add teacher-vs-student heatmap metrics for several queries.
-3. Create a tiny manual mask set for `human` and `hand`.
-4. Report RGB metrics for RGB-only vs RGB+semantic.
-5. Run rendering strategy ablation.
-6. Run targeted sampling ablation only if we want to keep it as a main claim.
-7. Add temporal consistency metrics.
-8. Add another scene if time remains.
+1. Treat `human` overlay rendering as done for the current checkpoint.
+2. Build the model-assisted human annotation set for `human` and `hand`.
+3. Compute human-mask metrics for the current checkpoint.
+4. Add teacher-vs-student heatmap metrics as a secondary table.
+5. Report RGB metrics for RGB-only vs RGB+semantic.
+6. Run rendering strategy ablation.
+7. Run targeted sampling ablation only if we want to keep it as a main claim.
+8. Add temporal consistency metrics.
+9. Add another scene if time remains.
 
 ## Claim Wording Guide
 
@@ -434,11 +480,14 @@ Avoid this:
 If time is short, the minimum package should be:
 
 1. Human query visualizations from our trained model.
-2. Teacher-vs-student metrics for 5 to 7 queries.
-3. Tiny manually labeled mask evaluation for `human`.
-4. RGB PSNR/SSIM/LPIPS table.
-5. Clear wording that this is OpenSeg distillation, not independent proof of
-   true semantic segmentation.
+2. Model-assisted human annotations for `human` and `hand`, with every mask
+   reviewed and accepted/corrected by a human.
+3. Human-mask metrics for the current checkpoint.
+4. Teacher-vs-student metrics for 5 to 7 queries.
+5. RGB PSNR/SSIM/LPIPS table.
+6. Clear wording that this is OpenSeg distillation, with independent
+   human-annotation evaluation added for selected queries rather than a complete
+   proof of general semantic segmentation.
 
 That package directly addresses the most serious critique without requiring a
 large new benchmark.
