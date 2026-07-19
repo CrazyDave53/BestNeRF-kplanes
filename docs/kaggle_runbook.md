@@ -364,32 +364,58 @@ feature rendering:
 PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16.py
 ```
 
-Before running the full ablations, test both new code paths with a 20-step
-combined smoke config:
+Before running the full ablations, smoke the whole ablation queue:
 
 ```bash
-PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_smoke_topk24_smoothl1.py
+bash scripts/kaggle_smoke_semantic_ablation_queue.sh
 ```
 
-Run these three ablations after the baseline:
+The smoke queue runs 20 steps for every top-k/SmoothL1 variant and writes
+checkpoints under `logs/baseline/cm_semantic_smoke_<ablation>`.
+
+After smoke passes, launch the long full-training/upload queue:
 
 ```bash
-# Cosine + normalized SmoothL1
-PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16_smoothl1.py
-
-# Top-k semantic rendering, K=24
-PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16_topk24.py
-
-# Thesis-style combined variant: top-k K=24 + normalized SmoothL1
-PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16_topk24_smoothl1.py
+export KAGGLE_DATASET_OWNER=lenguyenminhchau
+bash scripts/kaggle_run_semantic_ablation_queue.sh
 ```
 
-Expected log names:
+For a no-upload dry run:
 
-- `logs/baseline/cm_semantic_64f_ds16`
-- `logs/baseline/cm_semantic_64f_ds16_smoothl1`
+```bash
+UPLOAD_DATASETS=0 bash scripts/kaggle_run_semantic_ablation_queue.sh
+```
+
+The full queue skips a run when `logs/baseline/<expname>/model.pth` already
+exists, unless `SKIP_TRAINED=0` is set. After each completed checkpoint, it
+creates or versions a Kaggle dataset with one `tar.gz` archive of that log
+directory, then deletes the temporary package from `/kaggle/temp`.
+
+Full ablation grid:
+
+- `logs/baseline/cm_semantic_64f_ds16_smooth005`
+- `logs/baseline/cm_semantic_64f_ds16_smooth010`
+- `logs/baseline/cm_semantic_64f_ds16_smooth020`
+- `logs/baseline/cm_semantic_64f_ds16_topk1`
+- `logs/baseline/cm_semantic_64f_ds16_topk8`
+- `logs/baseline/cm_semantic_64f_ds16_topk16`
 - `logs/baseline/cm_semantic_64f_ds16_topk24`
-- `logs/baseline/cm_semantic_64f_ds16_topk24_smoothl1`
+- `logs/baseline/cm_semantic_64f_ds16_topk32`
+- `logs/baseline/cm_semantic_64f_ds16_topk48`
+- `logs/baseline/cm_semantic_64f_ds16_topk8_smooth010`
+- `logs/baseline/cm_semantic_64f_ds16_topk16_smooth010`
+- `logs/baseline/cm_semantic_64f_ds16_topk24_smooth010`
+- `logs/baseline/cm_semantic_64f_ds16_topk32_smooth010`
+- `logs/baseline/cm_semantic_64f_ds16_topk48_smooth010`
+- `logs/baseline/cm_semantic_64f_ds16_topk24_smooth005`
+- `logs/baseline/cm_semantic_64f_ds16_topk24_smooth020`
+
+The older hand-written configs such as `dynerf_cm_semantic_64f_ds16_topk24.py`
+and `dynerf_cm_semantic_64f_ds16_smoothl1.py` still exist, but the queue uses
+the env-driven configs:
+
+- `plenoxels/configs/local/dynerf_cm_semantic_smoke_ablation.py`
+- `plenoxels/configs/local/dynerf_cm_semantic_64f_ds16_ablation.py`
 
 ## Four-Camera Human Annotation Expansion
 
