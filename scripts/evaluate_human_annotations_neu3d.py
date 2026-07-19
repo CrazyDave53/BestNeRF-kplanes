@@ -137,6 +137,22 @@ def compute_teacher_scores(
     return normalized @ text_feature
 
 
+def resolve_teacher_cache_root(root: Path, camera: str) -> Path:
+    nested_root = root / "openseg_camckpts"
+    if (nested_root / f"{camera}.npy").is_file():
+        return nested_root
+    if (root / f"{camera}.npy").is_file():
+        return root
+    matches = sorted(root.rglob(f"{camera}.npy"))
+    if matches:
+        return matches[0].parent
+    raise FileNotFoundError(
+        f"Could not find {camera}.npy under {root}. "
+        "Pass --teacher-cache-dir as the directory containing cam*.npy files, "
+        "or a parent directory that contains the Kaggle dataset."
+    )
+
+
 def compute_psnr(pred: np.ndarray, target: np.ndarray) -> float:
     pred = pred.astype(np.float32, copy=False)
     target = target.astype(np.float32, copy=False)
@@ -448,11 +464,7 @@ def evaluate_annotations(
         teacher_row = None
         if teacher_cache_dir is not None:
             if camera not in teacher_shards:
-                shard_root = (
-                    teacher_cache_dir / "openseg_camckpts"
-                    if (teacher_cache_dir / "openseg_camckpts").is_dir()
-                    else teacher_cache_dir
-                )
+                shard_root = resolve_teacher_cache_root(teacher_cache_dir, camera)
                 teacher_shards[camera] = np.load(shard_root / f"{camera}.npy", mmap_mode="r")
             text_np = text_features[query].detach().cpu().numpy()
             teacher_scores = compute_teacher_scores(

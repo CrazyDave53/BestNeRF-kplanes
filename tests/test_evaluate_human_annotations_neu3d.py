@@ -16,6 +16,7 @@ from scripts.evaluate_human_annotations_neu3d import (
     group_metric_rows,
     load_annotation_rows,
     make_metric_row,
+    resolve_teacher_cache_root,
 )
 
 
@@ -124,6 +125,17 @@ class EvaluateHumanAnnotationsNeu3DTest(unittest.TestCase):
         )
 
         np.testing.assert_allclose(scores, [[1.0, 0.0], [0.0, 2 ** -0.5]], atol=1e-4)
+
+    def test_resolve_teacher_cache_root_finds_nested_kaggle_dataset_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            nested = root / "datasets" / "lenguyenminhchau" / "coffee-martini-openseg-ds16-64f"
+            nested.mkdir(parents=True)
+            np.save(nested / "cam01.npy", np.zeros((1, 1, 1, 3), dtype=np.float16))
+
+            resolved = resolve_teacher_cache_root(root, camera="cam01")
+
+        self.assertEqual(resolved, nested)
 
     def test_make_metric_row_records_method_name(self):
         row = {"query": "human", "camera": "cam01", "frame": "0", "status": "accepted",
