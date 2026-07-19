@@ -355,6 +355,94 @@ For the real ds16/64-frame semantic run:
 PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16.py
 ```
 
+## Semantic Ablation Training
+
+The current baseline is cosine semantic loss with full weighted semantic
+feature rendering:
+
+```bash
+PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16.py
+```
+
+Run these three ablations after the baseline:
+
+```bash
+# Cosine + normalized SmoothL1
+PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16_smoothl1.py
+
+# Top-k semantic rendering, K=24
+PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16_topk24.py
+
+# Thesis-style combined variant: top-k K=24 + normalized SmoothL1
+PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16_topk24_smoothl1.py
+```
+
+Expected log names:
+
+- `logs/baseline/cm_semantic_64f_ds16`
+- `logs/baseline/cm_semantic_64f_ds16_smoothl1`
+- `logs/baseline/cm_semantic_64f_ds16_topk24`
+- `logs/baseline/cm_semantic_64f_ds16_topk24_smoothl1`
+
+## Four-Camera Human Annotation Expansion
+
+Use the same 64-frame training timestamps but expand from `cam01` to the first
+four LLFF training cameras. For now, annotate `human` only.
+
+```bash
+cd /kaggle/working/BestNeRF/k-planes
+
+python scripts/prepare_human_annotations_neu3d.py \
+  --data-dir data/neu3d/coffee_martini \
+  --output-dir /kaggle/working/coffee_martini_human_annotations_4cam_human \
+  --split train \
+  --cameras auto \
+  --max-cameras 4 \
+  --frames 0,8,16,24,32,40,48,56 \
+  --queries human \
+  --downsample 2 \
+  --overwrite
+```
+
+Generate Grounded-SAM2 proposals:
+
+```bash
+python scripts/propose_human_masks_grounded_sam2.py \
+  --annotation-dir /kaggle/working/coffee_martini_human_annotations_4cam_human \
+  --grounded-sam2-root /kaggle/working/Grounded-SAM-2 \
+  --sam2-config /kaggle/working/Grounded-SAM-2/configs/sam2.1/sam2.1_hiera_l.yaml \
+  --sam2-checkpoint /kaggle/working/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt \
+  --device cuda \
+  --mask-merge union \
+  --overwrite
+```
+
+After reviewing the proposal overlays, if every proposal is acceptable unchanged:
+
+```bash
+ANN=/kaggle/working/coffee_martini_human_annotations_4cam_human
+mkdir -p "$ANN/masks/human"
+cp "$ANN"/proposals/human/*.png "$ANN/masks/human/"
+
+python - <<'PY'
+import csv
+from pathlib import Path
+
+ann = Path("/kaggle/working/coffee_martini_human_annotations_4cam_human")
+manifest = ann / "manifest.csv"
+rows = list(csv.DictReader(manifest.open(newline="")))
+for row in rows:
+    row["status"] = "accepted"
+    row["source"] = "grounded_sam2_reviewed"
+    row["reviewer"] = "human"
+    row["notes"] = "accepted after visual review"
+with manifest.open("w", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+PY
+```
+
 Local/unit verification:
 
 ```bash

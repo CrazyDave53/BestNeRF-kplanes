@@ -41,6 +41,35 @@ def semantic_cosine_loss(
     return (1.0 - (preds * targets).sum(dim=-1)).mean()
 
 
+def semantic_smooth_l1_loss(
+        preds: torch.Tensor,
+        targets: torch.Tensor,
+        eps: float = 1e-8) -> torch.Tensor:
+    preds = preds.float()
+    targets = targets.float()
+    valid_targets = semantic_target_valid_mask(targets, eps=eps)
+    if not valid_targets.any():
+        return preds.sum() * 0.0
+    preds = torch.nn.functional.normalize(preds[valid_targets], dim=-1, eps=eps)
+    targets = torch.nn.functional.normalize(targets[valid_targets], dim=-1, eps=eps)
+    return torch.nn.functional.smooth_l1_loss(preds, targets, reduction="mean")
+
+
+def semantic_feature_loss(
+        preds: torch.Tensor,
+        targets: torch.Tensor,
+        smooth_l1_weight: float = 0.0,
+        eps: float = 1e-8) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    cosine = semantic_cosine_loss(preds, targets, eps=eps)
+    parts = {"cosine": cosine}
+    loss = cosine
+    if smooth_l1_weight > 0.0:
+        smooth_l1 = semantic_smooth_l1_loss(preds, targets, eps=eps)
+        parts["smooth_l1"] = smooth_l1
+        loss = loss + smooth_l1_weight * smooth_l1
+    return loss, parts
+
+
 def config_bool(value) -> bool:
     if isinstance(value, str):
         return value.lower() in ("1", "true", "yes", "y", "on")
@@ -74,6 +103,9 @@ class BaseTrainer(abc.ABC):
             kwargs.get("freeze_rgb_for_semantic", False)
         )
         self.semantic_loss_weight = float(kwargs.get("semantic_loss_weight", 0.0))
+        self.semantic_smooth_l1_weight = float(
+            kwargs.get("semantic_smooth_l1_weight", 0.0)
+        )
         default_load_optimizer = self.train_rgb and not self.freeze_rgb_for_semantic
         self.load_optimizer_state = config_bool(
             kwargs.get(
@@ -145,6 +177,7 @@ class BaseTrainer(abc.ABC):
             # Reconstruction loss
             recon_loss = None
             semantic_loss = None
+            semantic_parts = {}
             loss = None
             # Regularization
             if self.train_rgb:
@@ -159,8 +192,11 @@ class BaseTrainer(abc.ABC):
                         "semantic training requires semantic_features in the model output; "
                         "check the model semantic branch/config."
                     )
-                semantic_loss = semantic_cosine_loss(
-                    fwd_out["semantic_features"], data["openseg_features"])
+                semantic_loss, semantic_parts = semantic_feature_loss(
+                    fwd_out["semantic_features"],
+                    data["openseg_features"],
+                    smooth_l1_weight=self.semantic_smooth_l1_weight,
+                )
                 semantic_objective = self.semantic_loss_weight * semantic_loss
                 loss = semantic_objective if loss is None else loss + semantic_objective
             if loss is None:
@@ -187,6 +223,11 @@ class BaseTrainer(abc.ABC):
                     if "semantic" not in self.loss_info:
                         self.loss_info["semantic"] = EMA()
                     self.loss_info["semantic"].update(semantic_loss_val)
+                    for part_name, part_loss in semantic_parts.items():
+                        loss_key = f"semantic_{part_name}"
+                        if loss_key not in self.loss_info:
+                            self.loss_info[loss_key] = EMA()
+                        self.loss_info[loss_key].update(part_loss.item())
                 if self.train_rgb:
                     for r in self.regularizers:
                         r.report(self.loss_info)

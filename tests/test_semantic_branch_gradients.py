@@ -193,6 +193,45 @@ class SemanticBranchGradientTest(unittest.TestCase):
 
         self.assertTrue(torch.allclose(loss, torch.tensor(0.0), atol=1e-6))
 
+    def test_smooth_l1_semantic_loss_compares_normalized_valid_features(self):
+        self.assertTrue(hasattr(base_trainer, "semantic_smooth_l1_loss"))
+        preds = torch.tensor([[2.0, 0.0, 0.0], [0.0, 4.0, 0.0]])
+        targets = torch.tensor([[4.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+
+        loss = base_trainer.semantic_smooth_l1_loss(preds, targets)
+
+        self.assertTrue(torch.allclose(loss, torch.tensor(0.0), atol=1e-6))
+
+    def test_semantic_feature_loss_can_add_smooth_l1_ablation_term(self):
+        self.assertTrue(hasattr(base_trainer, "semantic_feature_loss"))
+        preds = torch.tensor([[1.0, 0.0, 0.0]])
+        targets = torch.tensor([[0.0, 1.0, 0.0]])
+
+        loss, parts = base_trainer.semantic_feature_loss(
+            preds, targets, smooth_l1_weight=0.5)
+
+        self.assertIn("cosine", parts)
+        self.assertIn("smooth_l1", parts)
+        self.assertTrue(torch.allclose(loss, parts["cosine"] + 0.5 * parts["smooth_l1"]))
+
+    def test_topk_semantic_rendering_uses_highest_weight_samples_and_normalizes(self):
+        features = torch.tensor(
+            [
+                [
+                    [1.0, 0.0, 0.0],
+                    [0.0, 2.0, 0.0],
+                    [0.0, 0.0, 3.0],
+                ]
+            ]
+        )
+        weights = torch.tensor([[[0.2], [0.9], [0.4]]])
+
+        rendered = LowrankModel.render_semantic_features(
+            features, weights, mode="topk_weighted", topk=1)
+
+        expected = torch.tensor([[0.0, 1.0, 0.0]])
+        self.assertTrue(torch.allclose(rendered, expected, atol=1e-6))
+
     def test_semantic_train_step_creates_semantic_ema_key(self):
         with tempfile.TemporaryDirectory() as logdir:
             trainer = make_tiny_trainer(

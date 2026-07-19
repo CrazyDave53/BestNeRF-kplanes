@@ -24,9 +24,36 @@ The current branch has a working semantic K-Planes path:
     `lenguyenminhchau/coffee-martini-kplanes-semantic-ds16-64f`.
 - A render script exists for visual inspection of the `human` query:
   `scripts/render_semantic_query_neu3d.py`.
+- A reviewed model-assisted human annotation set exists for `cam01`, frames
+  `0,8,16,24,32,40,48,56`, queries `human` and `hand`:
+  `lenguyenminhchau/coffee-martini-human-annotations-cam01-64f`.
+- Human-mask evaluation now compares both `student_kplanes` and
+  `teacher_openseg` against the same reviewed masks.
 
 This is a strong implementation milestone, but it is not yet the complete
 method described in the thesis.
+
+## Current Human-Eval Results
+
+Evaluation folder:
+`/kaggle/working/cm_semantic_64f_ds16_human_eval_thresholds`
+
+Current annotation scope is small: one training camera, eight frames, and two
+queries. Treat these as first evidence, not final benchmark coverage.
+
+| Query | Method | AP | Best IoU | IoU@0.75 | IoU@0.90 | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| human | student_kplanes | 0.9657 | 0.9183 | 0.8791 | 0.9154 | Strong result; student slightly beats teacher on AP, best IoU, and strict-threshold IoU. |
+| human | teacher_openseg | 0.9518 | 0.8917 | 0.8906 | 0.8873 | Strong teacher baseline. |
+| hand | student_kplanes | 0.1070 | 0.1038 | 0.0853 | 0.0442 | Weak; likely query/small-object limitation. |
+| hand | teacher_openseg | 0.1222 | 0.1087 | 0.0643 | 0.0603 | Also weak, so this is not only a student failure. |
+
+RGB reconstruction on these annotated training frames is about PSNR `28.78` and
+SSIM `0.883`. We are not prioritizing the held-out RGB-quality table right now;
+it remains required before strong final thesis wording about rendering quality.
+
+Next annotation target: expand from one camera to four training cameras, using
+`human` only. Keep the same eight frames for comparability.
 
 ## Thesis Core Idea
 
@@ -586,6 +613,10 @@ Done for the current checkpoint.
 Exit condition:
 A reviewed human annotation set exists for at least `human` and `hand`.
 
+Status:
+Done for `cam01`, frames `0,8,16,24,32,40,48,56`, queries `human` and
+`hand`. Next expansion should use four training cameras and `human` only.
+
 ### Stage C: Build The Human-Metric Script
 
 1. Render student query heatmaps for every annotation row.
@@ -596,6 +627,11 @@ A reviewed human annotation set exists for at least `human` and `hand`.
 Exit condition:
 A human-mask metric table exists for the current cosine-only/full-weighted
 branch.
+
+Status:
+Done for the current `cam01` annotation set, including fixed thresholds
+`0.50`, `0.75`, and `0.90`, with both `student_kplanes` and
+`teacher_openseg` evaluated against the same reviewed masks.
 
 ### Stage D: Build The Teacher-Metric Script
 
@@ -608,12 +644,18 @@ branch.
 Exit condition:
 A table exists for the current cosine-only/full-weighted branch.
 
+Status:
+Partially done through the human-mask evaluator because teacher and student are
+both compared to human masks. Still needed: direct teacher-student agreement
+metrics across a broader query set.
+
 ### Stage E: Match The Thesis Method
 
 1. Add normalized SmoothL1.
 2. Add semantic rendering modes.
 3. Run `full_weighted` vs `topk_weighted K=24`.
-4. Compare against both human-mask and teacher-agreement metrics.
+4. Run the combined `topk_weighted K=24` plus normalized SmoothL1 variant.
+5. Compare against both human-mask and teacher-agreement metrics.
 
 Exit condition:
 We know whether the thesis final recipe improves our current code.
@@ -648,12 +690,12 @@ export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda-12.8/compat:$LD_L
 
 ## Bottom Line
 
-The thesis already contains the most important caveat: without human masks,
-evaluation measures OpenSeg teacher preservation, not absolute semantic
-correctness. P0 visual inspection is done, so the next best move is not another
-large training run. It is:
+The thesis already contains the most important caveat: teacher-only evaluation
+measures OpenSeg preservation, not absolute semantic correctness. We now have a
+small human-reviewed annotation set, and the `human` query looks strong. The
+next best move is:
 
-1. build model-assisted human annotations and review every mask;
-2. compute human-mask metrics for the current checkpoint;
-3. reproduce teacher-vs-student metrics as a secondary table;
-4. add SmoothL1/top-k to match the thesis method and compare again.
+1. expand human annotations from one camera to four cameras, `human` only;
+2. run the thesis-method ablations: SmoothL1, top-k rendering, and combined;
+3. reproduce direct teacher-vs-student metrics as a secondary table;
+4. defer held-out RGB PSNR/SSIM/LPIPS until the semantic comparison is stable.

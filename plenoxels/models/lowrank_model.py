@@ -55,6 +55,8 @@ class LowrankModel(nn.Module):
                  semantic_grid_config: Optional[Union[str, List[Dict]]] = None,
                  semantic_multiscale_res: Optional[Sequence[int]] = None,
                  semantic_linear_decoder_layers: int = 1,
+                 semantic_render_mode: str = "full_weighted",
+                 semantic_topk: int = 24,
                  **kwargs,
                  ):
         super().__init__()
@@ -70,8 +72,16 @@ class LowrankModel(nn.Module):
         self.linear_decoder_layers = linear_decoder_layers
         self.semantic_enabled = semantic_enabled
         self.semantic_detach_geometry = semantic_detach_geometry
+        self.semantic_render_mode = semantic_render_mode
+        self.semantic_topk = int(semantic_topk)
         self.density_act = init_density_activation(density_activation)
         self.timer = CudaTimer(enabled=False)
+        if self.semantic_render_mode not in ("full_weighted", "topk_weighted"):
+            raise ValueError(
+                "semantic_render_mode must be one of: full_weighted, topk_weighted"
+            )
+        if self.semantic_render_mode == "topk_weighted" and self.semantic_topk <= 0:
+            raise ValueError("semantic_topk must be positive when using topk_weighted")
 
         self.spatial_distortion: Optional[SpatialDistortion] = None
         if self.is_contracted:
@@ -191,6 +201,30 @@ class LowrankModel(nn.Module):
     def render_features(features: torch.Tensor, weights: torch.Tensor):
         return torch.sum(weights * features, dim=-2)
 
+    @staticmethod
+    def render_semantic_features(
+            features: torch.Tensor,
+            weights: torch.Tensor,
+            mode: str = "full_weighted",
+            topk: int = 24):
+        if mode == "full_weighted":
+            return LowrankModel.render_features(features, weights)
+        if mode != "topk_weighted":
+            raise ValueError(
+                "semantic render mode must be one of: full_weighted, topk_weighted"
+            )
+
+        n_samples = features.shape[-2]
+        topk = min(int(topk), n_samples)
+        sample_features = torch.nn.functional.normalize(features.float(), dim=-1)
+        sample_weights = weights.float()
+        topk_indices = torch.topk(sample_weights.squeeze(-1), k=topk, dim=-1).indices
+        topk_mask = torch.zeros_like(sample_weights.squeeze(-1), dtype=torch.bool)
+        topk_mask.scatter_(dim=-1, index=topk_indices, value=True)
+        selected_weights = sample_weights * topk_mask[..., None].to(sample_weights)
+        rendered = torch.sum(selected_weights * sample_features, dim=-2)
+        return torch.nn.functional.normalize(rendered, dim=-1).to(features)
+
     def forward(self, rays_o, rays_d, bg_color, near_far: torch.Tensor, timestamps=None):
         """
         rays_o : [batch, 3]
@@ -244,8 +278,11 @@ class LowrankModel(nn.Module):
                 semantic_features = self.semantic_field(
                     semantic_positions, timestamps=semantic_timestamps
                 )
-                outputs["semantic_features"] = self.render_features(
-                    semantic_features, semantic_weights
+                outputs["semantic_features"] = self.render_semantic_features(
+                    semantic_features,
+                    semantic_weights,
+                    mode=self.semantic_render_mode,
+                    topk=self.semantic_topk,
                 )
         for i in range(self.num_proposal_iterations):
             outputs[f"prop_depth_{i}"] = self.render_depth(

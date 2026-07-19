@@ -22,6 +22,16 @@ We have a working semantic branch:
   - `lenguyenminhchau/coffee-martini-openseg-ds16-64f`
 - A script exists to render a fixed `human` query heatmap:
   - `scripts/render_semantic_query_neu3d.py`
+- A first reviewed model-assisted human annotation set exists:
+  - `lenguyenminhchau/coffee-martini-human-annotations-cam01-64f`
+  - scope: `cam01`, frames `0,8,16,24,32,40,48,56`, queries `human` and
+    `hand`
+- Human-mask evaluation exists for both `student_kplanes` and
+  `teacher_openseg` against those reviewed masks:
+  - `human`: student AP `0.9657`, best IoU `0.9183`
+  - `human`: teacher AP `0.9518`, best IoU `0.8917`
+  - `hand`: both teacher and student are weak, so this query needs prompt or
+    target reconsideration.
 
 The code working is a strong engineering milestone. It is not yet enough for a
 strong scientific claim.
@@ -530,12 +540,17 @@ Without this protocol, call the output a "query heatmap", not a "mask" or
 ## Suggested Priority Order
 
 1. Treat `human` overlay rendering as done for the current checkpoint.
-2. Build the model-assisted human annotation set for `human` and `hand`.
-3. Compute human-mask metrics for the current checkpoint.
-4. Add teacher-vs-student heatmap metrics as a secondary table.
-5. Report RGB metrics for RGB-only vs RGB+semantic.
-6. Run rendering strategy ablation.
-7. Run targeted sampling ablation only if we want to keep it as a main claim.
+2. Treat the first `cam01` human-mask evaluation as done.
+3. Expand human annotations from one training camera to four training cameras,
+   using `human` only.
+4. Run thesis-method ablations:
+   - cosine/full-weighted baseline;
+   - cosine plus normalized SmoothL1;
+   - top-k semantic rendering with `K=24`;
+   - top-k plus normalized SmoothL1.
+5. Add teacher-vs-student heatmap metrics as a secondary table.
+6. Defer held-out RGB PSNR/SSIM/LPIPS until the semantic comparison is stable.
+7. Run targeted sampling only if we want to keep it as a main claim.
 8. Add temporal consistency metrics.
 9. Add another scene if time remains.
 
@@ -573,11 +588,11 @@ Avoid this:
 If time is short, the minimum package should be:
 
 1. Human query visualizations from our trained model.
-2. Model-assisted human annotations for `human` and `hand`, with every mask
-   reviewed and accepted/corrected by a human.
-3. Human-mask metrics for the current checkpoint.
+2. Model-assisted human annotations for `human`, with every mask reviewed and
+   accepted/corrected by a human.
+3. Human-mask metrics for the current checkpoint and ablation checkpoints.
 4. Teacher-vs-student metrics for 5 to 7 queries.
-5. RGB PSNR/SSIM/LPIPS table.
+5. RGB PSNR/SSIM/LPIPS table when time allows.
 6. Clear wording that this is OpenSeg distillation, with independent
    human-annotation evaluation added for selected queries rather than a complete
    proof of general semantic segmentation.
