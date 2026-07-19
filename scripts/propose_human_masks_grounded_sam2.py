@@ -95,6 +95,39 @@ def save_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2))
 
 
+def normalize_sam2_config(
+    sam2_config: str,
+    grounded_sam2_root: Path | None,
+) -> str:
+    is_posix_absolute = sam2_config.startswith("/")
+    config_path = Path(sam2_config)
+    if not config_path.is_absolute() and not is_posix_absolute:
+        return sam2_config.replace("\\", "/")
+    if grounded_sam2_root is None:
+        raise ValueError(
+            "absolute --sam2-config requires --grounded-sam2-root so it can "
+            "be converted to the Hydra config name expected by SAM2"
+        )
+    if is_posix_absolute:
+        root_text = str(grounded_sam2_root).replace("\\", "/").rstrip("/")
+        config_text = sam2_config.replace("\\", "/")
+        prefix = root_text + "/"
+        if not config_text.startswith(prefix):
+            raise ValueError(
+                "absolute --sam2-config must be inside --grounded-sam2-root; "
+                "SAM2 expects a config name like configs/sam2.1/sam2.1_hiera_l.yaml"
+            )
+        return config_text[len(prefix):]
+    try:
+        relative = config_path.resolve().relative_to(grounded_sam2_root.resolve())
+    except ValueError as exc:
+        raise ValueError(
+            "absolute --sam2-config must be inside --grounded-sam2-root; "
+            "SAM2 expects a config name like configs/sam2.1/sam2.1_hiera_l.yaml"
+        ) from exc
+    return relative.as_posix()
+
+
 def load_grounded_sam2(
     grounded_sam2_root: Path | None,
     sam2_config: str,
@@ -110,7 +143,8 @@ def load_grounded_sam2(
     from sam2.sam2_image_predictor import SAM2ImagePredictor
     from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
-    sam2_model = build_sam2(sam2_config, str(sam2_checkpoint), device=device)
+    sam2_config_name = normalize_sam2_config(sam2_config, grounded_sam2_root)
+    sam2_model = build_sam2(sam2_config_name, str(sam2_checkpoint), device=device)
     image_predictor = SAM2ImagePredictor(sam2_model)
     processor = AutoProcessor.from_pretrained(grounding_model_id)
     grounding_model = AutoModelForZeroShotObjectDetection.from_pretrained(

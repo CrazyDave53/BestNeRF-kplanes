@@ -11,6 +11,7 @@ from scripts.propose_human_masks_grounded_sam2 import (
     format_grounding_prompt,
     load_manifest_rows,
     merge_masks,
+    normalize_sam2_config,
     save_binary_mask,
 )
 
@@ -19,6 +20,22 @@ class ProposeHumanMasksGroundedSam2Test(unittest.TestCase):
     def test_format_grounding_prompt_lowercases_and_adds_period(self):
         self.assertEqual(format_grounding_prompt(" Human "), "human.")
         self.assertEqual(format_grounding_prompt("left hand."), "left hand.")
+
+    def test_normalize_sam2_config_converts_absolute_repo_path_for_hydra(self):
+        config = normalize_sam2_config(
+            "/kaggle/working/Grounded-SAM-2/configs/sam2.1/sam2.1_hiera_l.yaml",
+            grounded_sam2_root=Path("/kaggle/working/Grounded-SAM-2"),
+        )
+
+        self.assertEqual(config, "configs/sam2.1/sam2.1_hiera_l.yaml")
+
+    def test_normalize_sam2_config_keeps_relative_config_name(self):
+        config = normalize_sam2_config(
+            "configs/sam2.1/sam2.1_hiera_l.yaml",
+            grounded_sam2_root=None,
+        )
+
+        self.assertEqual(config, "configs/sam2.1/sam2.1_hiera_l.yaml")
 
     def test_merge_masks_unions_or_selects_largest_mask(self):
         masks = np.array([
