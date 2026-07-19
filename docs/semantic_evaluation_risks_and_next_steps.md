@@ -322,6 +322,36 @@ This lets us say:
 This is now the highest-priority next experiment because the masks are reusable
 across future checkpoints and do not require preserving every training session.
 
+Evaluate current checkpoint against the reviewed masks:
+
+```bash
+cd /kaggle/working/BestNeRF/k-planes
+
+export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
+
+CKPT=$(find /kaggle/input /kaggle/working -path '*cm_semantic_64f_ds16/model.pth' 2>/dev/null | head -1)
+echo "$CKPT"
+
+python scripts/evaluate_human_annotations_neu3d.py \
+  --annotation-dir /kaggle/working/coffee_martini_human_annotations \
+  --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16.py \
+  --checkpoint "$CKPT" \
+  --output-dir /kaggle/working/cm_semantic_64f_ds16_human_eval \
+  --batch-size 2048 \
+  --amp
+```
+
+This writes:
+
+- `per_annotation_metrics.csv`
+- `metrics_by_query.csv`
+- `metrics_overall.csv`
+- rendered RGB/heatmap/overlay images under `renders/`
+
+The same run reports PSNR and SSIM for the annotated training frames. For the
+final thesis RGB-quality table, still run standard held-out/test-view PSNR,
+SSIM, and ideally LPIPS.
+
 ### Experiment 4: Semantic Rendering Strategy Ablation
 
 Goal:

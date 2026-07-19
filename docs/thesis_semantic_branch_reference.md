@@ -323,6 +323,38 @@ Decision:
 This becomes the main thesis-strength table because the target is no longer
 OpenSeg.
 
+Evaluation command:
+
+```bash
+cd /kaggle/working/BestNeRF/k-planes
+
+export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda-12.8/compat:$LD_LIBRARY_PATH
+
+CKPT=$(find /kaggle/input /kaggle/working -path '*cm_semantic_64f_ds16/model.pth' 2>/dev/null | head -1)
+echo "$CKPT"
+
+python scripts/evaluate_human_annotations_neu3d.py \
+  --annotation-dir /kaggle/working/coffee_martini_human_annotations \
+  --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16.py \
+  --checkpoint "$CKPT" \
+  --output-dir /kaggle/working/cm_semantic_64f_ds16_human_eval \
+  --batch-size 2048 \
+  --amp
+```
+
+Outputs:
+
+- `per_annotation_metrics.csv`
+- `metrics_by_query.csv`
+- `metrics_overall.csv`
+- rendered RGB/heatmap/overlay images under `renders/`
+
+This command also reports PSNR and SSIM on the annotated training frames. That
+is useful evidence that the checkpoint reconstructs the reviewed views, but it
+does not replace the standard RGB table on held-out/test views. For thesis RGB
+quality, still report PSNR, SSIM, and ideally LPIPS on the normal validation
+split.
+
 ### 4. Reproduce Teacher-Vs-Student Metrics
 
 Purpose:
