@@ -364,6 +364,13 @@ feature rendering:
 PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_64f_ds16.py
 ```
 
+Before running the full ablations, test both new code paths with a 20-step
+combined smoke config:
+
+```bash
+PYTHONPATH=. python plenoxels/main.py --config-path plenoxels/configs/local/dynerf_cm_semantic_smoke_topk24_smoothl1.py
+```
+
 Run these three ablations after the baseline:
 
 ```bash
