@@ -238,7 +238,7 @@ coffee_martini_human_annotations/
 Suggested manifest columns:
 
 ```text
-image_path,mask_path,query,camera,frame,status,source,reviewer,notes
+image_path,proposal_path,mask_path,overlay_path,query,camera,frame,status,source,reviewer,notes
 ```
 
 Accepted statuses:
@@ -249,6 +249,24 @@ Accepted statuses:
 - `ambiguous`
 
 Only `accepted` and `corrected` masks should be used for metrics.
+
+Preparation command:
+
+```bash
+cd /kaggle/working/BestNeRF/k-planes
+
+python scripts/prepare_human_annotations_neu3d.py \
+  --data-dir data/neu3d/coffee_martini \
+  --output-dir /kaggle/working/coffee_martini_human_annotations \
+  --cameras cam00 \
+  --frames 0,8,16,24,32,40,48,56 \
+  --queries human,hand \
+  --downsample 2 \
+  --overwrite
+```
+
+Use `--cameras all --max-cameras 3` after the one-camera workflow is checked.
+The reviewed final masks should be binary PNGs in `masks/<query>/`.
 
 Metrics:
 

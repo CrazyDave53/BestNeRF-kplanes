@@ -217,7 +217,7 @@ coffee_martini_human_annotations/
 Suggested manifest columns:
 
 ```text
-image_path,mask_path,query,camera,frame,status,source,reviewer,notes
+image_path,proposal_path,mask_path,overlay_path,query,camera,frame,status,source,reviewer,notes
 ```
 
 Valid statuses:
@@ -231,6 +231,30 @@ Decision:
 This is now the highest-priority dataset artifact. It is reusable across future
 checkpoints and lets us report human-mask metrics without saving every model
 between sessions.
+
+Preparation command:
+
+```bash
+cd /kaggle/working/BestNeRF/k-planes
+
+python scripts/prepare_human_annotations_neu3d.py \
+  --data-dir data/neu3d/coffee_martini \
+  --output-dir /kaggle/working/coffee_martini_human_annotations \
+  --cameras cam00 \
+  --frames 0,8,16,24,32,40,48,56 \
+  --queries human,hand \
+  --downsample 2 \
+  --overwrite
+```
+
+Notes:
+
+- `--downsample 2` turns the 1014x1352 source videos into 507x676 review
+  images, matching the current RGB eval scale.
+- Use `--cameras all --max-cameras 3` after the one-camera workflow is checked.
+- The script creates `proposals/<query>/`, `masks/<query>/`, and
+  `overlays/<query>/`; Grounded-SAM2 should fill proposals/overlays, while the
+  reviewed final binary masks go in `masks/<query>/`.
 
 ### 3. Compute Human-Mask Metrics
 
