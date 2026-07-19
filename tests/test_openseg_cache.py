@@ -83,6 +83,45 @@ class OpenSegFeatureCacheTest(unittest.TestCase):
 
         np.testing.assert_array_equal(out[0].numpy(), cam00_values[1, 1, 2])
 
+    def test_lookup_resolves_kaggle_dataset_nested_under_input_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_root = Path(tmp) / "input"
+            shard_root = input_root / "datasets" / "lenguyenminhchau" / "coffee-martini-openseg-ds16-64f"
+            shard_root.mkdir(parents=True)
+            cam01_values = self._write_shard(shard_root / "cam01.npy")
+
+            cache = OpenSegFeatureCache(input_root, expected_feature_dim=4)
+            out = cache.lookup(
+                camera_names=["cam01"],
+                frame_ids=torch.tensor([1]),
+                x=torch.tensor([2]),
+                y=torch.tensor([1]),
+                rgb_h=2,
+                rgb_w=3,
+            )
+
+        np.testing.assert_array_equal(out[0].numpy(), cam01_values[1, 1, 2])
+
+    def test_lookup_resolves_nonexistent_kaggle_dataset_alias_from_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_root = Path(tmp) / "input"
+            alias_root = input_root / "coffee-martini-openseg-ds16-64f"
+            shard_root = input_root / "datasets" / "lenguyenminhchau" / alias_root.name
+            shard_root.mkdir(parents=True)
+            cam01_values = self._write_shard(shard_root / "cam01.npy")
+
+            cache = OpenSegFeatureCache(alias_root, expected_feature_dim=4)
+            out = cache.lookup(
+                camera_names=["cam01"],
+                frame_ids=torch.tensor([1]),
+                x=torch.tensor([2]),
+                y=torch.tensor([1]),
+                rgb_h=2,
+                rgb_w=3,
+            )
+
+        np.testing.assert_array_equal(out[0].numpy(), cam01_values[1, 1, 2])
+
     def test_lookup_loads_repeated_camera_once_per_call(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

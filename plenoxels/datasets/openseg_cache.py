@@ -22,16 +22,48 @@ def map_pixels_to_feature_pixels(
 class OpenSegFeatureCache:
     def __init__(self, root: str | Path, expected_feature_dim: int = 768):
         root = Path(root)
-        nested_root = root / "openseg_camckpts"
-        self.root = nested_root if nested_root.is_dir() else root
+        self.root = self._resolve_root(root)
         self.expected_feature_dim = expected_feature_dim
         self._shards: dict[str, np.ndarray] = {}
+
+    @staticmethod
+    def _has_shards(root: Path) -> bool:
+        return root.is_dir() and any(root.glob("cam*.npy"))
+
+    @classmethod
+    def _resolve_root(cls, root: Path) -> Path:
+        direct_candidates = [root, root / "openseg_camckpts"]
+        for candidate in direct_candidates:
+            if cls._has_shards(candidate):
+                return candidate
+
+        matching_roots = []
+        if root.exists() and root.is_dir():
+            matching_roots.append(root)
+        elif root.parent.exists() and root.parent.is_dir():
+            matching_roots.extend(
+                path for path in root.parent.rglob(root.name) if path.is_dir()
+            )
+
+        for matching_root in sorted(set(matching_roots), key=lambda path: str(path)):
+            candidates = [matching_root, matching_root / "openseg_camckpts"]
+            for candidate in candidates:
+                if cls._has_shards(candidate):
+                    return candidate
+
+            shard_paths = sorted(matching_root.rglob("cam*.npy"))
+            if shard_paths:
+                return shard_paths[0].parent
+
+        return root
 
     def _open_shard(self, camera_name: str) -> np.ndarray:
         shard_name = f"{camera_name}.npy"
         shard_path = self.root / shard_name
         if not shard_path.exists():
-            raise FileNotFoundError(f"OpenSeg feature shard not found: {shard_name}")
+            raise FileNotFoundError(
+                f"OpenSeg feature shard not found: {shard_name} under {self.root}"
+            )
 
         shard = np.load(shard_path, mmap_mode="r")
         if shard.ndim != 4:
