@@ -104,24 +104,28 @@ def compute_mask_metrics(
     scores: np.ndarray,
     target: np.ndarray,
     fixed_threshold: float = 0.5,
+    fixed_thresholds: Sequence[float] | None = None,
 ) -> dict[str, float]:
     if scores.shape != target.shape:
         raise ValueError(f"score/mask shape mismatch: {scores.shape} vs {target.shape}")
     scores = np.clip(scores.astype(np.float32, copy=False), 0.0, 1.0)
     target = target.astype(bool)
-    fixed = threshold_metrics(scores, target, fixed_threshold)
     best_value, best_threshold = best_iou(scores, target)
-    suffix = f"{fixed_threshold:.2f}"
-    return {
+    metrics = {
         "ap": average_precision(scores, target),
-        f"iou_at_{suffix}": fixed["iou"],
-        f"precision_at_{suffix}": fixed["precision"],
-        f"recall_at_{suffix}": fixed["recall"],
-        f"f1_at_{suffix}": fixed["f1"],
         "best_iou": best_value,
         "best_threshold": best_threshold,
         "mask_pixels": float(target.sum()),
     }
+    thresholds = list(fixed_thresholds) if fixed_thresholds is not None else [fixed_threshold]
+    for threshold in thresholds:
+        fixed = threshold_metrics(scores, target, float(threshold))
+        suffix = f"{float(threshold):.2f}"
+        metrics[f"iou_at_{suffix}"] = fixed["iou"]
+        metrics[f"precision_at_{suffix}"] = fixed["precision"]
+        metrics[f"recall_at_{suffix}"] = fixed["recall"]
+        metrics[f"f1_at_{suffix}"] = fixed["f1"]
+    return metrics
 
 
 def compute_teacher_scores(
@@ -208,11 +212,13 @@ def make_metric_row(
     fixed_threshold: float,
     psnr: float,
     ssim: float,
+    fixed_thresholds: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     mask_metrics = compute_mask_metrics(
         heatmap,
         mask,
         fixed_threshold=fixed_threshold,
+        fixed_thresholds=fixed_thresholds,
     )
     return {
         "method": method,
@@ -433,6 +439,7 @@ def evaluate_annotations(
     batch_size: int,
     use_amp: bool,
     fixed_threshold: float,
+    fixed_thresholds: Sequence[float],
     save_images: bool,
 ) -> list[dict[str, Any]]:
     rendered: dict[tuple[str, int, str], tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
@@ -463,6 +470,7 @@ def evaluate_annotations(
             heatmap=heatmap,
             mask=mask,
             fixed_threshold=fixed_threshold,
+            fixed_thresholds=fixed_thresholds,
             psnr=psnr,
             ssim=ssim,
         )
@@ -486,6 +494,7 @@ def evaluate_annotations(
                 heatmap=teacher_heatmap,
                 mask=mask,
                 fixed_threshold=fixed_threshold,
+                fixed_thresholds=fixed_thresholds,
                 psnr=np.nan,
                 ssim=np.nan,
             )
@@ -527,6 +536,21 @@ def parse_statuses(value: str) -> set[str]:
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
+def parse_thresholds(value: str) -> list[float]:
+    thresholds = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        threshold = float(item)
+        if threshold < 0.0 or threshold > 1.0:
+            raise ValueError("fixed thresholds must be in [0, 1]")
+        thresholds.append(threshold)
+    if not thresholds:
+        raise ValueError("expected at least one fixed threshold")
+    return thresholds
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--annotation-dir", type=Path, required=True)
@@ -537,6 +561,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--statuses", default="accepted,corrected")
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--fixed-threshold", type=float, default=0.5)
+    parser.add_argument("--fixed-thresholds", default=None)
     parser.add_argument("--clip-model", default="ViT-L-14")
     parser.add_argument("--clip-pretrained", default="openai")
     parser.add_argument("--amp", action="store_true")
@@ -561,6 +586,12 @@ def main() -> None:
         clip_model_name=args.clip_model,
         clip_pretrained=args.clip_pretrained,
     )
+    fixed_thresholds = (
+        parse_thresholds(args.fixed_thresholds)
+        if args.fixed_thresholds is not None
+        else [args.fixed_threshold]
+    )
+    fixed_threshold = fixed_thresholds[0]
 
     metric_rows = evaluate_annotations(
         annotation_dir=args.annotation_dir,
@@ -571,7 +602,8 @@ def main() -> None:
         output_dir=args.output_dir,
         batch_size=args.batch_size,
         use_amp=args.amp,
-        fixed_threshold=args.fixed_threshold,
+        fixed_threshold=fixed_threshold,
+        fixed_thresholds=fixed_thresholds,
         save_images=not args.no_save_images,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)

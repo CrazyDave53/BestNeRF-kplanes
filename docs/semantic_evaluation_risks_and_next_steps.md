@@ -339,6 +339,7 @@ python scripts/evaluate_human_annotations_neu3d.py \
   --teacher-cache-dir /kaggle/input/coffee-martini-openseg-ds16-64f \
   --output-dir /kaggle/working/cm_semantic_64f_ds16_human_eval \
   --batch-size 2048 \
+  --fixed-thresholds 0.50,0.75,0.90 \
   --amp
 ```
 

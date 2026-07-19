@@ -46,6 +46,18 @@ class EvaluateHumanAnnotationsNeu3DTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["best_iou"], 1.0)
         self.assertAlmostEqual(metrics["best_threshold"], 0.61)
 
+    def test_compute_mask_metrics_reports_multiple_fixed_thresholds(self):
+        target = np.array([[True, False], [True, False]])
+        scores = np.array([[0.9, 0.6], [0.7, 0.1]], dtype=np.float32)
+
+        metrics = compute_mask_metrics(scores, target, fixed_thresholds=[0.5, 0.75])
+
+        self.assertIn("iou_at_0.50", metrics)
+        self.assertIn("iou_at_0.75", metrics)
+        self.assertAlmostEqual(metrics["iou_at_0.75"], 0.5)
+        self.assertAlmostEqual(metrics["precision_at_0.75"], 1.0)
+        self.assertAlmostEqual(metrics["recall_at_0.75"], 0.5)
+
     def test_best_iou_handles_empty_masks(self):
         scores = np.zeros((2, 2), dtype=np.float32)
         target = np.zeros((2, 2), dtype=bool)
