@@ -264,6 +264,39 @@ Notes:
   `overlays/<query>/`; Grounded-SAM2 should fill proposals/overlays, while the
   reviewed final binary masks go in `masks/<query>/`.
 
+Grounded-SAM2 proposal command:
+
+```bash
+cd /kaggle/working
+
+if [ ! -d Grounded-SAM-2 ]; then
+  git clone https://github.com/IDEA-Research/Grounded-SAM-2.git
+fi
+
+cd /kaggle/working/Grounded-SAM-2
+python -m pip install -e .
+python -m pip install transformers supervision
+
+mkdir -p checkpoints
+if [ ! -f checkpoints/sam2.1_hiera_large.pt ]; then
+  wget -O checkpoints/sam2.1_hiera_large.pt \
+    https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
+fi
+
+cd /kaggle/working/BestNeRF/k-planes
+
+python scripts/propose_human_masks_grounded_sam2.py \
+  --annotation-dir /kaggle/working/coffee_martini_human_annotations \
+  --grounded-sam2-root /kaggle/working/Grounded-SAM-2 \
+  --sam2-config /kaggle/working/Grounded-SAM-2/configs/sam2.1/sam2.1_hiera_l.yaml \
+  --sam2-checkpoint /kaggle/working/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt \
+  --device cuda \
+  --mask-merge union \
+  --overwrite
+```
+
+For a first smoke test, add `--limit 2`.
+
 ### 3. Compute Human-Mask Metrics
 
 Purpose:
