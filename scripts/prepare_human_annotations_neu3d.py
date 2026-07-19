@@ -73,8 +73,39 @@ def discover_cameras(data_dir: Path) -> list[str]:
     return cameras
 
 
-def resolve_cameras(data_dir: Path, cameras_arg: str, max_cameras: int | None = None) -> list[str]:
-    if cameras_arg.strip().lower() == "all":
+def select_llff_split_cameras(
+    cameras: Sequence[str],
+    split: str,
+    datadir_name: str,
+) -> list[str]:
+    cameras = sorted(cameras, key=camera_sort_key)
+    if split == "train":
+        split_ids = list(range(1, len(cameras)))
+    elif split == "test":
+        split_ids = [0]
+    elif split == "all":
+        split_ids = list(range(len(cameras)))
+    else:
+        raise ValueError("--split must be one of: train, test, all")
+
+    if "coffee_martini" in datadir_name:
+        split_ids = [index for index in split_ids if index != 12]
+    return [cameras[index] for index in split_ids]
+
+
+def resolve_cameras(
+    data_dir: Path,
+    cameras_arg: str,
+    split: str,
+    max_cameras: int | None = None,
+) -> list[str]:
+    if cameras_arg.strip().lower() == "auto":
+        cameras = select_llff_split_cameras(
+            discover_cameras(data_dir),
+            split=split,
+            datadir_name=str(data_dir),
+        )
+    elif cameras_arg.strip().lower() == "all":
         cameras = discover_cameras(data_dir)
     else:
         cameras = parse_csv_values(cameras_arg)
@@ -219,9 +250,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
         "--cameras",
-        default="cam00",
-        help="comma-separated camera names, or 'all'",
+        default="auto",
+        help="comma-separated camera names, 'all', or 'auto' for the LLFF split cameras",
     )
+    parser.add_argument("--split", choices=("train", "test", "all"), default="train")
     parser.add_argument(
         "--frames",
         default="0,8,16,24,32,40,48,56",
@@ -249,7 +281,7 @@ def main() -> None:
     if output_dir.exists() and args.overwrite:
         shutil.rmtree(output_dir)
 
-    cameras = resolve_cameras(data_dir, args.cameras, args.max_cameras)
+    cameras = resolve_cameras(data_dir, args.cameras, args.split, args.max_cameras)
     frames = parse_frame_list(args.frames)
     queries = parse_csv_values(args.queries)
 
@@ -274,6 +306,7 @@ def main() -> None:
 
     print(f"Wrote {len(rows)} manifest rows to {output_dir / 'manifest.csv'}")
     print(f"Extracted {len(cameras) * len(frames)} RGB frames to {output_dir / 'images'}")
+    print(f"Selected cameras for split {args.split}: {', '.join(cameras)}")
     print("Next: run Grounded-SAM2 proposals, then review masks into masks/<query>/")
 
 

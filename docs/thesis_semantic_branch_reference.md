@@ -240,7 +240,9 @@ cd /kaggle/working/BestNeRF/k-planes
 python scripts/prepare_human_annotations_neu3d.py \
   --data-dir data/neu3d/coffee_martini \
   --output-dir /kaggle/working/coffee_martini_human_annotations \
-  --cameras cam00 \
+  --split train \
+  --cameras auto \
+  --max-cameras 1 \
   --frames 0,8,16,24,32,40,48,56 \
   --queries human,hand \
   --downsample 2 \
@@ -251,7 +253,13 @@ Notes:
 
 - `--downsample 2` turns the 1014x1352 source videos into 507x676 review
   images, matching the current RGB eval scale.
-- Use `--cameras all --max-cameras 3` after the one-camera workflow is checked.
+- `--cameras auto --split train` follows the LLFF/Neu3D train-camera split:
+  `cam00` is reserved for test, and the Coffee Martini unsynchronized camera is
+  excluded.
+- The durable OpenSeg cache contains frames `0..63`, so choose annotation frame
+  ids inside that range for the current 64-frame checkpoint.
+- Use `--cameras auto --split train --max-cameras 3` after the one-camera
+  workflow is checked.
 - The script creates `proposals/<query>/`, `masks/<query>/`, and
   `overlays/<query>/`; Grounded-SAM2 should fill proposals/overlays, while the
   reviewed final binary masks go in `masks/<query>/`.

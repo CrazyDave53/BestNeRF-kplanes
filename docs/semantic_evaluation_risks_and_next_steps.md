@@ -258,15 +258,19 @@ cd /kaggle/working/BestNeRF/k-planes
 python scripts/prepare_human_annotations_neu3d.py \
   --data-dir data/neu3d/coffee_martini \
   --output-dir /kaggle/working/coffee_martini_human_annotations \
-  --cameras cam00 \
+  --split train \
+  --cameras auto \
+  --max-cameras 1 \
   --frames 0,8,16,24,32,40,48,56 \
   --queries human,hand \
   --downsample 2 \
   --overwrite
 ```
 
-Use `--cameras all --max-cameras 3` after the one-camera workflow is checked.
-The reviewed final masks should be binary PNGs in `masks/<query>/`.
+Use `--cameras auto --split train --max-cameras 3` after the one-camera
+workflow is checked. The durable OpenSeg cache contains frames `0..63`, so keep
+annotation frame ids inside that range for the current 64-frame checkpoint. The
+reviewed final masks should be binary PNGs in `masks/<query>/`.
 
 Metrics:
 

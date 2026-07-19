@@ -11,6 +11,7 @@ from scripts.prepare_human_annotations_neu3d import (
     is_binary_mask_array,
     parse_csv_values,
     parse_frame_list,
+    select_llff_split_cameras,
     write_manifest,
 )
 
@@ -44,6 +45,35 @@ class PrepareHumanAnnotationsNeu3DTest(unittest.TestCase):
         self.assertEqual(rows[0]["frame"], "0")
         self.assertEqual(rows[0]["status"], "pending")
         self.assertEqual(rows[0]["source"], "grounded_sam2")
+
+    def test_select_llff_train_cameras_excludes_test_and_coffee_unsynced_camera(self):
+        cameras = [
+            "cam00", "cam01", "cam02", "cam04", "cam05", "cam06",
+            "cam07", "cam08", "cam09", "cam10", "cam11", "cam12",
+            "cam13", "cam14", "cam16", "cam18", "cam19", "cam20",
+        ]
+
+        selected = select_llff_split_cameras(
+            cameras,
+            split="train",
+            datadir_name="coffee_martini",
+        )
+
+        self.assertEqual(selected[0], "cam01")
+        self.assertNotIn("cam00", selected)
+        self.assertNotIn("cam13", selected)
+        self.assertEqual(len(selected), 16)
+
+    def test_select_llff_test_camera_returns_reserved_first_camera(self):
+        cameras = ["cam00", "cam01", "cam02"]
+
+        selected = select_llff_split_cameras(
+            cameras,
+            split="test",
+            datadir_name="coffee_martini",
+        )
+
+        self.assertEqual(selected, ["cam00"])
 
     def test_write_manifest_preserves_expected_header(self):
         rows = build_manifest_rows(
