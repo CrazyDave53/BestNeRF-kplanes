@@ -323,6 +323,28 @@ def build_trainer(config: dict[str, Any], checkpoint: str):
     return trainer
 
 
+def load_checkpoint_into_trainer(trainer, checkpoint: str) -> None:
+    import torch
+
+    try:
+        checkpoint_data = torch.load(
+            checkpoint,
+            map_location=trainer.device,
+            weights_only=False,
+        )
+    except TypeError:
+        checkpoint_data = torch.load(checkpoint, map_location=trainer.device)
+    trainer.load_model(checkpoint_data, training_needed=False)
+
+
+def apply_eval_config_to_trainer(trainer, config: dict[str, Any]) -> None:
+    model = trainer.model
+    if hasattr(model, "semantic_render_mode"):
+        model.semantic_render_mode = config.get("semantic_render_mode", "full_weighted")
+    if hasattr(model, "semantic_topk"):
+        model.semantic_topk = int(config.get("semantic_topk", 24))
+
+
 def find_train_image_id(dataset, camera: str, raw_frame: int) -> tuple[int, int]:
     if dataset.split != "train":
         raise ValueError("expected a train split dataset")
@@ -570,6 +592,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def write_metric_outputs(output_dir: Path, metric_rows: Sequence[dict[str, Any]]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    write_csv(output_dir / "per_annotation_metrics.csv", metric_rows)
+    write_csv(
+        output_dir / "metrics_by_method_query.csv",
+        group_metric_rows(metric_rows, keys=["method", "query"]),
+    )
+    write_csv(output_dir / "metrics_by_query.csv", group_metric_rows(metric_rows, keys=["query"]))
+    write_csv(output_dir / "metrics_by_method.csv", group_metric_rows(metric_rows, keys=["method"]))
+    write_csv(output_dir / "metrics_overall.csv", group_metric_rows(metric_rows, keys=[]))
+
+
 def main() -> None:
     args = parse_args()
     manifest_path = args.annotation_dir / "manifest.csv"
@@ -606,15 +640,7 @@ def main() -> None:
         fixed_thresholds=fixed_thresholds,
         save_images=not args.no_save_images,
     )
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    write_csv(args.output_dir / "per_annotation_metrics.csv", metric_rows)
-    write_csv(
-        args.output_dir / "metrics_by_method_query.csv",
-        group_metric_rows(metric_rows, keys=["method", "query"]),
-    )
-    write_csv(args.output_dir / "metrics_by_query.csv", group_metric_rows(metric_rows, keys=["query"]))
-    write_csv(args.output_dir / "metrics_by_method.csv", group_metric_rows(metric_rows, keys=["method"]))
-    write_csv(args.output_dir / "metrics_overall.csv", group_metric_rows(metric_rows, keys=[]))
+    write_metric_outputs(args.output_dir, metric_rows)
     print(f"Wrote metrics to {args.output_dir}")
 
 
