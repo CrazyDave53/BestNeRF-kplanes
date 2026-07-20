@@ -417,6 +417,69 @@ the env-driven configs:
 - `plenoxels/configs/local/dynerf_cm_semantic_smoke_ablation.py`
 - `plenoxels/configs/local/dynerf_cm_semantic_64f_ds16_ablation.py`
 
+## Coarse-To-Fine Semantic Training
+
+The coarse-to-fine queue tests whether semantic learning improves when the
+semantic field first learns a coarse scale and then resumes with a fine scale:
+
+```text
+Stage 1: semantic_multiscale_res = [1], 3000 steps
+Stage 2: semantic_multiscale_res = [1, 2], resume to 10000 steps
+```
+
+Stage 2 loads the coarse checkpoint with `--log-dir`, but its config sets
+`load_optimizer=False` and `load_scheduler=False` because the fine semantic
+scale adds new parameters.
+
+Smoke the finalist C2F variants first:
+
+```bash
+cd /kaggle/working/BestNeRF/k-planes
+bash scripts/kaggle_smoke_semantic_c2f_queue.sh
+```
+
+The smoke queue trains 20 coarse steps and then resumes for 40 total fine steps
+for each finalist:
+
+- `topk8`
+- `topk16`
+- `topk24`
+- `topk16_smooth010`
+
+Run the full C2F queue:
+
+```bash
+export KAGGLE_DATASET_OWNER=lenguyenminhchau
+bash scripts/kaggle_run_semantic_c2f_queue.sh
+```
+
+For a no-upload dry run:
+
+```bash
+UPLOAD_DATASETS=0 bash scripts/kaggle_run_semantic_c2f_queue.sh
+```
+
+The full queue writes coarse checkpoints such as:
+
+```text
+logs/baseline/cm_semantic_64f_ds16_c2f_topk8_coarse/model.pth
+```
+
+and final checkpoints such as:
+
+```text
+logs/baseline/cm_semantic_64f_ds16_c2f_topk8/model.pth
+```
+
+By default, uploaded Kaggle datasets use IDs like:
+
+```text
+lenguyenminhchau/cm-sem-c2f-topk8
+lenguyenminhchau/cm-sem-c2f-topk16
+lenguyenminhchau/cm-sem-c2f-topk24
+lenguyenminhchau/cm-sem-c2f-topk16-smooth010
+```
+
 ## Four-Camera Human Annotation Expansion
 
 Use the same 64-frame training timestamps but expand from `cam01` to the first

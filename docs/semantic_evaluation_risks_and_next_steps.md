@@ -32,9 +32,76 @@ We have a working semantic branch:
   - `human`: teacher AP `0.9518`, best IoU `0.8917`
   - `hand`: both teacher and student are weak, so this query needs prompt or
     target reconsideration.
+- A 17-checkpoint semantic ablation evaluation completed against the same
+  `cam01` human-mask set:
+  - baseline: `cm_semantic_64f_ds16`
+  - 16 trained ablations: SmoothL1 weights, Top-K semantic rendering, and
+    Top-K plus SmoothL1 combinations.
 
 The code working is a strong engineering milestone. It is not yet enough for a
 strong scientific claim.
+
+## Latest Ablation Readout
+
+Evaluation source:
+`/kaggle/working/semantic_ablation_human_eval_fast/student_human_summary.csv`
+
+Scope:
+one training camera, eight frames, query `human`. This is good for choosing
+which methods deserve more annotation coverage; it is not yet the final table.
+
+Teacher reference on the same reviewed masks:
+
+| Method | AP | Best IoU | IoU@0.75 | IoU@0.90 |
+| --- | ---: | ---: | ---: | ---: |
+| teacher_openseg | 0.9518 | 0.8917 | 0.8906 | 0.8873 |
+| baseline student | 0.9653 | 0.9182 | 0.8789 | 0.9153 |
+
+Best student ablations:
+
+| Rank | Experiment | AP | Best IoU | IoU@0.75 | IoU@0.90 | PSNR | Readout |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | `topk8` | 0.9899 | 0.9478 | 0.9284 | 0.9397 | 28.79 | Best balanced semantic result; strong finalist. |
+| 2 | `topk1` | 0.9913 | 0.9400 | 0.9214 | 0.9331 | 28.85 | Best AP; useful single-sample ablation. |
+| 3 | `topk16` | 0.9890 | 0.9461 | 0.9309 | 0.9165 | 28.80 | Best IoU@0.75 and best SSIM among strong variants. |
+| 4 | `topk16_smooth010` | 0.9896 | 0.9445 | 0.9202 | 0.9403 | 28.84 | Best strict IoU@0.90; good combined-loss finalist. |
+| 5 | `topk24` | 0.9883 | 0.9470 | 0.9305 | 0.8864 | 28.87 | Best PSNR/SSIM; thesis-parity Top-K value. |
+
+Interpretation:
+
+- Top-K semantic rendering is clearly useful on the current human-mask set.
+  Every good Top-K run beats both the baseline student and OpenSeg teacher on
+  AP and best IoU for `human`.
+- SmoothL1 alone is not compelling:
+  - `smooth005`: AP `0.9580`, best IoU `0.9136`
+  - `smooth010`: AP `0.9668`, best IoU `0.9188`
+  - `smooth020`: AP `0.9718`, best IoU `0.9166`
+  These are close to the baseline, not a major improvement.
+- Top-K plus SmoothL1 can help at strict thresholds, especially
+  `topk16_smooth010`, but it is not uniformly better than plain Top-K.
+- `topk48_smooth010` should be treated as a failed or unstable variant for now:
+  PSNR drops to `26.54` and SSIM drops to `0.834`, much worse than the other
+  runs.
+- Fixed IoU@0.50 is not very informative here because normalized heatmaps at
+  threshold 0.50 over-predict the person mask and produce near-perfect recall
+  with low precision. AP, best IoU, and strict fixed thresholds such as 0.75 and
+  0.90 are more useful for this table.
+
+Recommended finalists for the next annotation/evaluation round:
+
+1. `cm_semantic_64f_ds16` as the baseline student.
+2. `cm_semantic_64f_ds16_topk8` as the balanced winner.
+3. `cm_semantic_64f_ds16_topk1` as the single-sample control.
+4. `cm_semantic_64f_ds16_topk16` or `cm_semantic_64f_ds16_topk16_smooth010` as
+   the strict-threshold contender.
+5. `cm_semantic_64f_ds16_topk24` as thesis-parity K=24.
+
+Next improvement track:
+run coarse-to-fine versions of the strongest variants. The C2F schedule trains
+`semantic_multiscale_res=[1]` for 3000 steps, then resumes with
+`semantic_multiscale_res=[1, 2]` to 10000 steps. Start with `topk8`, `topk16`,
+`topk24`, and `topk16_smooth010`; compare them against the one-stage versions
+using the same `cam01` human-mask evaluation.
 
 ## Main Evaluation Risk
 
@@ -548,11 +615,16 @@ Without this protocol, call the output a "query heatmap", not a "mask" or
    - cosine plus normalized SmoothL1;
    - top-k semantic rendering with `K=24`;
    - top-k plus normalized SmoothL1.
-5. Add teacher-vs-student heatmap metrics as a secondary table.
-6. Defer held-out RGB PSNR/SSIM/LPIPS until the semantic comparison is stable.
-7. Run targeted sampling only if we want to keep it as a main claim.
-8. Add temporal consistency metrics.
-9. Add another scene if time remains.
+5. Run coarse-to-fine training for the strongest Top-K variants:
+   - `topk8`;
+   - `topk16`;
+   - `topk24`;
+   - `topk16_smooth010`.
+6. Add teacher-vs-student heatmap metrics as a secondary table.
+7. Defer held-out RGB PSNR/SSIM/LPIPS until the semantic comparison is stable.
+8. Run targeted sampling only if we want to keep it as a main claim.
+9. Add temporal consistency metrics.
+10. Add another scene if time remains.
 
 ## Claim Wording Guide
 

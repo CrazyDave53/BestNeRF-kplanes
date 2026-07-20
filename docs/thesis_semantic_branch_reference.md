@@ -55,6 +55,35 @@ it remains required before strong final thesis wording about rendering quality.
 Next annotation target: expand from one camera to four training cameras, using
 `human` only. Keep the same eight frames for comparability.
 
+## Current Ablation Results
+
+Evaluation folder:
+`/kaggle/working/semantic_ablation_human_eval_fast`
+
+This evaluation compares 17 checkpoints against the same reviewed `cam01`
+human-mask set: the baseline semantic student plus 16 ablations. The most
+important result is that Top-K semantic rendering is consistently stronger than
+the full-weighted baseline for the `human` query.
+
+| Experiment | AP | Best IoU | IoU@0.75 | IoU@0.90 | PSNR | Interpretation |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `teacher_openseg` | 0.9518 | 0.8917 | 0.8906 | 0.8873 | n/a | Teacher reference, evaluated against human masks. |
+| `cm_semantic_64f_ds16` | 0.9653 | 0.9182 | 0.8789 | 0.9153 | 28.78 | Current baseline student. |
+| `cm_semantic_64f_ds16_topk1` | 0.9913 | 0.9400 | 0.9214 | 0.9331 | 28.85 | Best AP. |
+| `cm_semantic_64f_ds16_topk8` | 0.9899 | 0.9478 | 0.9284 | 0.9397 | 28.79 | Best balanced result; strongest current finalist. |
+| `cm_semantic_64f_ds16_topk16` | 0.9890 | 0.9461 | 0.9309 | 0.9165 | 28.80 | Best IoU@0.75. |
+| `cm_semantic_64f_ds16_topk16_smooth010` | 0.9896 | 0.9445 | 0.9202 | 0.9403 | 28.84 | Best IoU@0.90. |
+| `cm_semantic_64f_ds16_topk24` | 0.9883 | 0.9470 | 0.9305 | 0.8864 | 28.87 | Thesis-parity K=24; best RGB metrics among strong variants. |
+
+SmoothL1 alone does not currently look like a major improvement over the
+baseline. It is still useful as a controlled ablation, but the main thesis
+claim should emphasize Top-K rendering unless broader evaluation changes the
+ranking.
+
+Avoid treating `cm_semantic_64f_ds16_topk48_smooth010` as a good result for now:
+it reaches AP `0.9841`, but RGB quality drops to PSNR `26.54` and SSIM `0.834`,
+which suggests an unstable or damaging configuration.
+
 ## Thesis Core Idea
 
 The thesis proposes distilling OpenSeg features into Dynamic K-Planes so that a
