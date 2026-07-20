@@ -25,10 +25,12 @@ class SemanticCoarseToFineQueueTest(unittest.TestCase):
                 "SEM_TOPK": "8",
                 "SEM_SMOOTH_L1_WEIGHT": "0.0",
                 "SEM_C2F_COARSE_STEPS": "3000",
+                "LOG_ROOT": "/kaggle/temp/c2f_logs",
             },
         )
 
         self.assertEqual(config["expname"], "cm_semantic_64f_ds16_c2f_topk8_coarse")
+        self.assertEqual(config["logdir"], "/kaggle/temp/c2f_logs")
         self.assertEqual(config["num_steps"], 3000)
         self.assertEqual(config["save_every"], 3000)
         self.assertEqual(config["semantic_multiscale_res"], [1])
@@ -45,10 +47,12 @@ class SemanticCoarseToFineQueueTest(unittest.TestCase):
                 "SEM_TOPK": "16",
                 "SEM_SMOOTH_L1_WEIGHT": "0.1",
                 "SEM_C2F_FINE_STEPS": "10000",
+                "LOG_ROOT": "/kaggle/temp/c2f_logs",
             },
         )
 
         self.assertEqual(config["expname"], "cm_semantic_64f_ds16_c2f_topk16_smooth010")
+        self.assertEqual(config["logdir"], "/kaggle/temp/c2f_logs")
         self.assertEqual(config["num_steps"], 10000)
         self.assertEqual(config["save_every"], 10000)
         self.assertEqual(config["semantic_multiscale_res"], [1, 2])
@@ -66,6 +70,7 @@ class SemanticCoarseToFineQueueTest(unittest.TestCase):
 
         self.assertIn("dynerf_cm_semantic_64f_ds16_c2f_coarse.py", script)
         self.assertIn("dynerf_cm_semantic_64f_ds16_c2f_fine.py", script)
+        self.assertIn("/kaggle/temp/semantic_c2f_smoke_logs", script)
         self.assertIn("SEM_C2F_COARSE_STEPS=20", script)
         self.assertIn("SEM_C2F_FINE_STEPS=40", script)
 

@@ -17,6 +17,7 @@ SKIP_TRAINED="${SKIP_TRAINED:-1}"
 UPLOAD_DATASETS="${UPLOAD_DATASETS:-1}"
 
 mkdir -p "$PACKAGE_ROOT"
+mkdir -p "$LOG_ROOT"
 
 if [[ -z "$DATASET_OWNER" ]]; then
   DATASET_OWNER="$(python - <<'PY'
@@ -122,6 +123,7 @@ run_one() {
     SEM_TOPK="$topk" \
     SEM_SMOOTH_L1_WEIGHT="$smooth" \
     SEM_C2F_COARSE_STEPS=3000 \
+    LOG_ROOT="$LOG_ROOT" \
     PYTHONPATH=. python plenoxels/main.py --config-path "$COARSE_CONFIG"
   fi
   verify_checkpoint "$coarse_expname"
@@ -135,6 +137,7 @@ run_one() {
     SEM_TOPK="$topk" \
     SEM_SMOOTH_L1_WEIGHT="$smooth" \
     SEM_C2F_FINE_STEPS=10000 \
+    LOG_ROOT="$LOG_ROOT" \
     PYTHONPATH=. python plenoxels/main.py \
       --config-path "$FINE_CONFIG" \
       --log-dir "${LOG_ROOT}/${coarse_expname}"

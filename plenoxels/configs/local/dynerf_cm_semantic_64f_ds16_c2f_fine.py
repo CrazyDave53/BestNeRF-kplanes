@@ -16,6 +16,7 @@ def _env_int(name: str, default: int) -> int:
 config = dict(config)
 
 c2f_name = os.environ.get("SEM_C2F_NAME", "topk8")
+config["logdir"] = os.environ.get("LOG_ROOT", config["logdir"])
 config["expname"] = f"cm_semantic_64f_ds16_c2f_{c2f_name}"
 config["num_steps"] = _env_int("SEM_C2F_FINE_STEPS", 10000)
 config["save_every"] = config["num_steps"]
