@@ -262,28 +262,30 @@ class LowrankModel(nn.Module):
             "depth": depth,
         }
 
+        render_semantic_in_eval = getattr(self, "render_semantic_in_eval", False)
+
         # These use a lot of GPU memory, so we avoid storing them for eval.
         if self.training:
             outputs["weights_list"] = weights_list
             outputs["ray_samples_list"] = ray_samples_list
-            if self.semantic_field is not None:
-                semantic_positions = ray_samples.get_positions()
-                semantic_weights = weights
-                semantic_timestamps = timestamps
-                if self.semantic_detach_geometry:
-                    semantic_positions = semantic_positions.detach()
-                    semantic_weights = semantic_weights.detach()
-                    if semantic_timestamps is not None:
-                        semantic_timestamps = semantic_timestamps.detach()
-                semantic_features = self.semantic_field(
-                    semantic_positions, timestamps=semantic_timestamps
-                )
-                outputs["semantic_features"] = self.render_semantic_features(
-                    semantic_features,
-                    semantic_weights,
-                    mode=self.semantic_render_mode,
-                    topk=self.semantic_topk,
-                )
+        if self.semantic_field is not None and (self.training or render_semantic_in_eval):
+            semantic_positions = ray_samples.get_positions()
+            semantic_weights = weights
+            semantic_timestamps = timestamps
+            if self.semantic_detach_geometry:
+                semantic_positions = semantic_positions.detach()
+                semantic_weights = semantic_weights.detach()
+                if semantic_timestamps is not None:
+                    semantic_timestamps = semantic_timestamps.detach()
+            semantic_features = self.semantic_field(
+                semantic_positions, timestamps=semantic_timestamps
+            )
+            outputs["semantic_features"] = self.render_semantic_features(
+                semantic_features,
+                semantic_weights,
+                mode=self.semantic_render_mode,
+                topk=self.semantic_topk,
+            )
         for i in range(self.num_proposal_iterations):
             outputs[f"prop_depth_{i}"] = self.render_depth(
                 weights=weights_list[i], ray_samples=ray_samples_list[i], rays_d=ray_bundle.directions)

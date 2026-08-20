@@ -97,7 +97,10 @@ def render_flypath_frame(
     rgb_chunks = []
     score_chunks = {query: [] for query in text_features}
     was_training = trainer.model.training
-    trainer.model.train()
+    had_eval_semantic_flag = hasattr(trainer.model, "render_semantic_in_eval")
+    old_eval_semantic_flag = getattr(trainer.model, "render_semantic_in_eval", False)
+    trainer.model.render_semantic_in_eval = True
+    trainer.model.eval()
     try:
         with torch.no_grad(), torch.cuda.amp.autocast(enabled=use_amp):
             for start in range(0, rays_o.shape[0], batch_size):
@@ -123,6 +126,10 @@ def render_flypath_frame(
                     score_chunks[query].append((semantic @ text_feature).detach().cpu())
     finally:
         trainer.model.train(was_training)
+        if had_eval_semantic_flag:
+            trainer.model.render_semantic_in_eval = old_eval_semantic_flag
+        else:
+            delattr(trainer.model, "render_semantic_in_eval")
 
     rgb = torch.cat(rgb_chunks, 0).reshape(h, w, 3).clamp(0, 1).numpy()
     scores = {
