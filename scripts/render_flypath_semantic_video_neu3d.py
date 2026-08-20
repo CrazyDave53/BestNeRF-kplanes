@@ -256,6 +256,7 @@ def main() -> None:
             overlay = overlay_heatmap(rgb_u8, heatmap_color, args.alpha)
             write_png(query_dir / "heatmaps" / f"frame_{render_index:04d}.png", heatmap_color)
             write_png(query_dir / "overlays" / f"frame_{render_index:04d}.png", overlay)
+            (query_dir / "scores").mkdir(parents=True, exist_ok=True)
             np.save(
                 query_dir / "scores" / f"frame_{render_index:04d}_t{raw_time:03d}.npy",
                 scores.astype(np.float32),
