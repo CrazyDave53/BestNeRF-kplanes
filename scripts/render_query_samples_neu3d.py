@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import glob
 import importlib.util
 import os
@@ -12,6 +13,13 @@ from typing import Any, Sequence
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+
+def parse_override_value(value: str) -> Any:
+    try:
+        return ast.literal_eval(value)
+    except (SyntaxError, ValueError):
+        return value
 
 
 def load_config(config_path: str, overrides: Sequence[str]) -> dict[str, Any]:
@@ -23,7 +31,7 @@ def load_config(config_path: str, overrides: Sequence[str]) -> dict[str, Any]:
     config = dict(cfg.config)
     for override in overrides:
         key, value = override.split("=", 1)
-        config[key] = value
+        config[key] = parse_override_value(value)
     return config
 
 
