@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import importlib.util
 import os
 from pathlib import Path
@@ -137,22 +138,52 @@ def build_trainer(config: dict[str, Any], checkpoint: str):
     return trainer
 
 
+def infer_train_camera_names(dataset) -> list[str]:
+    if hasattr(dataset, "camera_names"):
+        return list(dataset.camera_names)
+
+    videopaths = sorted(glob.glob(os.path.join(dataset.datadir, "cam*.mp4")))
+    camera_names = [Path(path).stem for path in videopaths]
+    split_ids = np.arange(1, len(camera_names))
+    if "coffee_martini" in dataset.datadir:
+        split_ids = np.setdiff1d(split_ids, 12)
+    if getattr(dataset, "max_cameras", None) is not None:
+        split_ids = split_ids[:dataset.max_cameras]
+    return [camera_names[index] for index in split_ids]
+
+
+def infer_num_frames_per_camera(dataset, camera_names: Sequence[str]) -> int:
+    if hasattr(dataset, "num_frames_per_camera"):
+        return int(dataset.num_frames_per_camera)
+    if not camera_names:
+        raise ValueError("cannot infer frames per camera without train camera names")
+    if len(dataset.poses) % len(camera_names) != 0:
+        raise ValueError(
+            f"cannot infer frames per camera: {len(dataset.poses)} poses for "
+            f"{len(camera_names)} train cameras"
+        )
+    return len(dataset.poses) // len(camera_names)
+
+
 def find_train_image_id(dataset, camera: str, raw_frame: int) -> tuple[int, int]:
     if dataset.split != "train":
         raise ValueError("expected train split dataset")
-    if camera not in dataset.camera_names:
-        raise ValueError(f"camera {camera!r} is not in train cameras: {dataset.camera_names}")
-    camera_index = dataset.camera_names.index(camera)
-    start = camera_index * dataset.num_frames_per_camera
-    end = start + dataset.num_frames_per_camera
-    if dataset.frame_ids_by_image is None:
-        if raw_frame < 0 or raw_frame >= dataset.num_frames_per_camera:
+    camera_names = infer_train_camera_names(dataset)
+    if camera not in camera_names:
+        raise ValueError(f"camera {camera!r} is not in train cameras: {camera_names}")
+    camera_index = camera_names.index(camera)
+    num_frames_per_camera = infer_num_frames_per_camera(dataset, camera_names)
+    start = camera_index * num_frames_per_camera
+    end = start + num_frames_per_camera
+    frame_ids_by_image = getattr(dataset, "frame_ids_by_image", None)
+    if frame_ids_by_image is None:
+        if raw_frame < 0 or raw_frame >= num_frames_per_camera:
             raise ValueError(f"frame {raw_frame} is outside train frame range")
         return start + raw_frame, camera_index
 
     import torch
 
-    frame_ids = dataset.frame_ids_by_image[start:end]
+    frame_ids = frame_ids_by_image[start:end]
     matches = torch.nonzero(frame_ids == raw_frame, as_tuple=False).flatten()
     if matches.numel() == 0:
         raise ValueError(f"frame {raw_frame} is not available for {camera}: {frame_ids.tolist()}")
